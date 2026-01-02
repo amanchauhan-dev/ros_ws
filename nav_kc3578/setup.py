@@ -24,8 +24,12 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            "sim_nav_v1 = nav_kc3578.sim_nav_v1:main",
-            "sim_line_follow_with_avoidance = nav_kc3578.sim_line_follow_with_avoidance:main",
+            # Simulation Virtual World Nodes
+            "sim_nav = nav_kc3578.sim_nav:main",
+            "sim_line_follow = nav_kc3578.sim_line_follow:main",
+
+            # Real Virtual World Nodes
+            # TODO: Add real robot nodes here
         ],
     },
 )
