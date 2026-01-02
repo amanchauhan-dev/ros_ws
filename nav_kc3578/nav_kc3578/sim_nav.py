@@ -48,7 +48,7 @@ WAYPOINT_TOL = 0.2
 # -------- MOTION --------
 FORWARD_SPEED = 0.4
 TURN_GAIN     = 1.2
-AVOID_GAIN    = 0.6
+AVOID_GAIN    = 0.7
 MAX_ANG_Z     = 1.5
 
 # -------- ALIGNMENT --------
@@ -62,8 +62,8 @@ FRONT_CENTER = 0.0
 LEFT_CENTER  = math.pi / 2
 RIGHT_CENTER = -math.pi / 2
 
-FRONT_TOL = 0.6
-SIDE_TOL  = 0.3
+FRONT_TOL = 1.0
+SIDE_TOL  = 0.4
 
 LOG_THROTTLE = 1.0
 
@@ -120,6 +120,7 @@ class Navigate(Node):
 
     def control_loop(self):
         if not self.running:
+            self.get_logger().info(f"(STOP) Self.running: {self.running}")
             return
 
         twist = Twist()
@@ -155,7 +156,10 @@ class Navigate(Node):
         dist = math.hypot(dx, dy)
 
         if dist < WAYPOINT_TOL:
+            self.get_logger().info(f"WAYPOINT REACHED :{self.wp_idx} ({wx:.2f}, {wy:.2f})")
             self.wp_idx = (self.wp_idx + 1) % len(self.waypoints)
+            wx, wy = self.waypoints[self.wp_idx]
+            self.get_logger().info(f"NEW WAYPOINT :{self.wp_idx} ({wx:.2f}, {wy:.2f})")
             return
 
         goal_yaw = math.atan2(dy, dx)
@@ -168,6 +172,8 @@ class Navigate(Node):
             twist.linear.x = FORWARD_SPEED * 0.6
             twist.angular.z = AVOID_GAIN if d_left > d_right else -AVOID_GAIN
             self.cmd_pub.publish(twist)
+            side = "LEFT" if d_left > d_right else "RIGHT" 
+            self.get_logger().info(f"OBSTACLE AT FRONT AVOIDING: MOVING && TURNING {side}")
             return
 
         # =====================================================
@@ -178,11 +184,13 @@ class Navigate(Node):
             twist.angular.z = TURN_GAIN * yaw_err
             twist.angular.z = max(-MAX_ANG_Z, min(MAX_ANG_Z, twist.angular.z))
             self.cmd_pub.publish(twist)
+            self.get_logger().info(f"TURNING IN PLACE TOWARDS WAYPOINT")
             return
 
         # =====================================================
         # PRIORITY 3 — MOVE STRAIGHT
         # =====================================================
+        self.get_logger().info(f"MOVING TOWARDS WAYPOINT")
         twist.linear.x = FORWARD_SPEED
         twist.angular.z = 0.0
         self.cmd_pub.publish(twist)

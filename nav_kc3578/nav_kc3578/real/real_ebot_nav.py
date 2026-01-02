@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
 
-# Waypoints
-# P0 = (0.0, 0.0)
-# L1 = (1.5, -1.54)
-# L2 = (3.2, 0.0)
-# L3 = (1.5, 1.70)
-
-# SAFE_X = [0, 4.70]
-# SAFE_Y = [-1.54, 0.0, 1.70]      
-
-
 import math
 import rclpy
 from rclpy.node import Node
