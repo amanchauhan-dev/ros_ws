@@ -2,7 +2,7 @@
 
 ## *RULES*
 1. All the *Packages* should be at root level.
-2. For testing codes which you dont want to put in package, you can use **1_not_pkg**
+2. For testing codes which you dont want to put in package, you can use **1_not_pkg**. In this directory you can put any file any test code, jupyter files, etc. KEEP IN MIND IT'S NOT A PACKAGE
 3. Your packages should be independent of VENV or CONDA. 
 
 
@@ -15,7 +15,8 @@
 
 # FOR 1_not_pkg 
 
-1. Create a venv
+1. Create a venv 
+    - *NOTE: DON'T CREATE THIS VENV INSIDE ANY WORKSPACE*
 2. Run:
     ```bash
     pip3 install -r requirements.txt
