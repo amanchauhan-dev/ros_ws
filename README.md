@@ -1,13 +1,25 @@
 # Workspace *ros_ws*
 
-# FOR test_codes 
+## *RULES*
+1. All the *Packages* should be at root level.
+2. For testing codes which you dont want to put in package, you can use **1_not_pkg**
+3. Your packages should be independent of VENV or CONDA. 
 
-- Create a venv
-- Run 
 
-```bash
-pip3 install -r requirements.txt
-```
+## Directory *(IMPORTANT)*
+
+- **1_not_pkg**: 
+    - This directory contains all the test codes. 
+    - *NOTE* "This is not node"
+- [...rest]: This all are nodes
+
+# FOR 1_not_pkg 
+
+1. Create a venv
+2. Run:
+    ```bash
+    pip3 install -r requirements.txt
+    ```
 - Select python interpreter as your venv
 
 ## NOTE: requirements.txt is not required to run nodes
@@ -17,15 +29,15 @@ pip3 install -r requirements.txt
 
 - venv not required
 - Build your workspace 
-```bash
-colcon build
-```
+    ```bash
+    colcon build
+    ```
 
 - Source your node
-```bash
-source install/setup.bash
-```
+    ```bash
+    source install/setup.bash
+    ```
 - Run your nodes
-```bash
-ros2 run <pkg_name> <node_name>
-```
+    ```bash
+    ros2 run <pkg_name> <node_name>
+    ```
