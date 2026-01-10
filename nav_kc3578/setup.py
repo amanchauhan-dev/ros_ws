@@ -27,6 +27,7 @@ setup(
             # Simulation Virtual World Nodes
             "sim_nav = nav_kc3578.sim_nav:main",
             "sim_line_follow = nav_kc3578.sim_line_follow:main",
+            "sim_line_follow_v1 = nav_kc3578.sim_line_follow_v1:main",
             "sim_shape = nav_kc3578.sim_shape:main",
 
             # Real Virtual World Nodes
