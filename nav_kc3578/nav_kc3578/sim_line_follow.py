@@ -52,8 +52,8 @@ LINES = [
 START_LINE_INDEX = 0
 
 # ---------- MOTION ----------
-SPEED_FOLLOW   = 0.4
-SPEED_APPROACH = 0.2
+SPEED_FOLLOW   = 1.0
+SPEED_APPROACH = 1.0
 MAX_OMEGA      = 1.5
 
 # ---------- LINE CONTROL ----------
@@ -147,13 +147,21 @@ class LineFollower(Node):
     # ========================================================
 
     def control_loop(self):
+        rs = self.detector.right_shape_votes
+        if min(rs) > 0:
+            self.get_logger().info(f"Right status: {self.detector.right_shape_votes} {self.detector.right_plant_votes}")
+        ls = self.detector.right_shape_votes
+        if min(ls) > 0:
+            self.get_logger().info(f"Right status: {self.detector.right_shape_votes} {self.detector.right_plant_votes}")
+
+
         result = self.detector.update(
             robot_pose=(self.x, self.y, self.yaw),
             lidar_global_points=self.lidar_pts
         )
 
         if result:
-            self.get_logger().info(result)
+            self.get_logger().info(f"Detection: {result}")
             print(result)
         twist = Twist()
 

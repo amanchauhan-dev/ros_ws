@@ -27,9 +27,11 @@ setup(
             # Simulation Virtual World Nodes
             "sim_nav = nav_kc3578.sim_nav:main",
             "sim_line_follow = nav_kc3578.sim_line_follow:main",
+            "sim_shape = nav_kc3578.sim_shape:main",
 
             # Real Virtual World Nodes
-            # TODO: Add real robot nodes here
+            "real_shape = nav_kc3578.real.real_shape:main",
+            "real_shape_v1 = nav_kc3578.real.real_shape_v1:main"
         ],
     },
 )
