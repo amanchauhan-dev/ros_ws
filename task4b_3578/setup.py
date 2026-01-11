@@ -27,7 +27,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            "shape = task4b_3578.shape:main"
+            "shape_v1 = task4b_3578.shape_v1:main",
+            "shape_graph = task4b_3578.shape_graph:main"
         ],
     },
 )
