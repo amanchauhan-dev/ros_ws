@@ -62,10 +62,10 @@ PLANTS_TRACKS = [
 ]
 
 # LiDAR scan indices
-RIGHT_SCAN_START = 0
-RIGHT_SCAN_END = 90
-LEFT_SCAN_START = 270
-LEFT_SCAN_END = 360
+FRONT_ANGLE = 0.0
+LEFT_ANGLE  = math.pi / 2
+RIGHT_ANGLE = -math.pi / 2
+SECTOR_WIDTH = math.radians(15)
 
 # MAD filtering parameters
 MAD_MULTIPLIER = 2.5
@@ -362,8 +362,17 @@ class Ransac(Node):
 
     def buffer_side_points(self, pts):
         """Extract and buffer right and left side points."""
-        right_pts = pts[RIGHT_SCAN_START:RIGHT_SCAN_END]
-        left_pts = pts[LEFT_SCAN_START:LEFT_SCAN_END]
+        right_pts , left_pts =[], []
+
+        for gx, gy in pts:
+            dx, dy = gx - self.current_x, gy - self.current_y
+            ang = math.atan2(dy, dx) - self.current_yaw
+            ang = math.atan2(math.sin(ang), math.cos(ang))
+
+            if abs(ang - RIGHT_ANGLE) <= SECTOR_WIDTH:
+                right_pts.append([gx, gy])
+            elif abs(ang - LEFT_ANGLE) <= SECTOR_WIDTH:
+                left_pts.append([gx, gy])
 
         self.right_buffer.append(self.get_side(right_pts))
         self.left_buffer.append(self.get_side(left_pts))

@@ -46,7 +46,7 @@ WAYPOINTS = [P1, P2, P3, P0, P5, P4, P3, P0]
 WAYPOINT_TOL = 0.2
 
 # -------- MOTION --------
-FORWARD_SPEED = 0.4
+FORWARD_SPEED = 1.0
 TURN_GAIN     = 1.2
 AVOID_GAIN    = 0.7
 MAX_ANG_Z     = 1.5

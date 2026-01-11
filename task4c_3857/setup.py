@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'nav_kc3578'
+package_name = 'task4c_3857'
 
 setup(
     name=package_name,
@@ -24,20 +24,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            "test_nav = nav_kc3578.test_nav:main",
-            # Simulation Virtual World Nodes
-            "sim_nav = nav_kc3578.sim_nav:main",
-            "sim_line_follow = nav_kc3578.sim_line_follow:main",
-            "sim_line_follow_v1 = nav_kc3578.sim_line_follow_v1:main",
-            "sim_shape = nav_kc3578.sim_shape:main",
-
-            # Real Virtual World Nodes
-            "real_shape = nav_kc3578.real.real_shape:main",
-            "real_shape_v1 = nav_kc3578.real.real_shape_v1:main"
-
-
-            # final
-            "fr_shape_v1 = nav_kc3578.final.real.fr_shape_v1:main"
+            "nav = task4c_3857.nav:main",
+            "shape = task4c_3857.shape:main"
         ],
     },
 )
