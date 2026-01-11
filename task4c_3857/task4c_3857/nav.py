@@ -89,8 +89,8 @@ class Navigate(Node):
         self.current_yaw = 0.0
         
         # Motion params
-        self.linear_speed = 2.0
-        self.angular_speed = 1.5
+        self.linear_speed = 1.0
+        self.angular_speed = 1.0
         self.position_tolerance = 0.15
         self.angular_tolerance = 0.05
         self.pre_turn_distance = 0.25   # how much extra to move before turning (meters)

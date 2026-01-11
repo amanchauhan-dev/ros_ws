@@ -288,12 +288,13 @@ class Ransac(Node):
 
     # ---------------- main loop / plotting ---------------- #
     def control_loop(self):
-        # stop at dock station 
-        # if self.at_dock:
-        #     self.at_dock_pub.publish(Bool(data=True))
-        #     return
-        # else:
-        #     self.at_dock_pub.publish(Bool(data=False))
+        # stop at dock station ( <=== If want to keep stop at dock until arm sends signal uncomment this code ===>)
+        if self.at_dock:
+            self.at_dock_pub.publish(Bool(data=True))
+            return
+        else:
+            self.at_dock_pub.publish(Bool(data=False))
+        # (<=== end dock keep stop code ==> )
 
          # If STOP mode active → check if 2 seconds passed
         if self.stop_active:
@@ -309,7 +310,7 @@ class Ransac(Node):
                 if self.current_plant_idx ==0:
                     # docstation
                     detection_msg.data = f"DOCK_STATION,{self.current_x:.2f},{self.current_y:.2f},{self.current_plant_idx}"
-                    self.at_dock = True
+                    # self.at_dock = True   # <========== Note: uncomment if no need to keep stop at dock 
                 else:
                     # plants
                     s = "FERTILIZER_REQUIRED" if self.current_shape == 0 else "BAD_HEALTH"
