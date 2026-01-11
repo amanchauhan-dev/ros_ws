@@ -11,7 +11,10 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
     ],
-    install_requires=['setuptools'],
+    install_requires=[
+        'setuptools',
+        "numpy"
+        ],
     zip_safe=True,
     maintainer='aman',
     maintainer_email='amanchauhan0435@gmail.com',
@@ -24,8 +27,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            "nav = task4c_3857.nav:main",
-            "shape = task4c_3857.shape:main"
+            "nav = task4c_3578.nav:main",
+            "shape = task4c_3578.shape:main"
         ],
     },
 )

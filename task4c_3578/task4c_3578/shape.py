@@ -8,7 +8,7 @@
 #                   Aman Ratanlal Chauhan, Harshil Rahulbhai Mehta
 # Filename:         shape_detector_task3b.py
 # Functions:        __init__, fertilizer_placement_status_callback, in_lane_callback,
-#                   odom_callback, lidar_callback, get_side, control_loop, graph,
+#                   odom_callback, lidar_callback, get_side, control_loop
 #                   ransac_line, extract_multiple_lines, detect_shape,
 #                   line_direction, angle_between_lines, compute_line_endpoints,
 #                   segment_length, compute_shape_position, destroy_node, main
@@ -21,7 +21,6 @@ from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 import numpy as np
-import matplotlib.pyplot as plt
 from std_msgs.msg import Bool, String
 import time
 
@@ -105,17 +104,6 @@ class Ransac(Node):
         self.left_side_next_shape = [0, 0]
         self.left_side_next_plant_index = [0]*9
         self.left_last_broadcast_plant_id = None
-
-        # plotting
-        # plt.ion()
-        self.colors = ["red", "blue", "green", "orange", "purple", "cyan"]
-        self.fig, self.ax = plt.subplots(figsize=(10, 10))
-        self.ax.set_title("RANSAC", fontsize=14, fontweight="bold")
-        self.ax.set_xlabel("X (m)", fontsize=11)
-        self.ax.set_ylabel("Y (m)", fontsize=11)
-        self.ax.set_xlim(-10, 10)
-        self.ax.set_ylim(-10, 10)
-        self.ax.grid(True, alpha=0.3)
 
         # timer
         self.create_timer(0.1, self.control_loop)
@@ -286,7 +274,7 @@ class Ransac(Node):
     
         return np.array(clean_pts)
 
-    # ---------------- main loop / plotting ---------------- #
+    # ---------------- main loop ---------------- #
     def control_loop(self):
         # stop at dock station ( <=== If want to keep stop at dock until arm sends signal uncomment this code ===>)
         if self.at_dock:
@@ -332,7 +320,6 @@ class Ransac(Node):
 
         line_dicts = []
         for i, (model, pts_line) in enumerate(self.right_lines):
-            color = self.colors[i % len(self.colors)]
             p1, p2, m, k = self.compute_line_endpoints(model, pts_line)
             eq = f"{m:.2f}x + {k:.2f}" if m else f"x = {k:.2f}"
             line_dicts.append({
@@ -342,8 +329,6 @@ class Ransac(Node):
                 "slope": m,
                 "intercept": k
             })
-            self.ax.plot([p1[0],p2[0]], [p1[1], p2[1]],
-                 color=color, linewidth=2, label=f"R{i+1}: {eq}")
 
         shape = self.detect_shape(line_dicts)
         if shape:
@@ -391,7 +376,6 @@ class Ransac(Node):
 
         line_dicts = []
         for i, (model, pts_line) in enumerate(self.left_lines):
-            color = self.colors[i % len(self.colors)]
             p1, p2, m, k = self.compute_line_endpoints(model, pts_line)
             eq = f"{m:.2f}x + {k:.2f}" if m else f"x = {k:.2f}"
             line_dicts.append({
@@ -401,8 +385,6 @@ class Ransac(Node):
                 "slope": m,
                 "intercept": k
             })
-            self.ax.plot([p1[0],p2[0]], [p1[1], p2[1]],
-                 color=color, linewidth=2, label=f"R{i+1}: {eq}")
 
         shape = self.detect_shape(line_dicts)
         if shape:
@@ -445,47 +427,6 @@ class Ransac(Node):
                             self.left_side_next_plant_index = [0]*9
                             self.left_side_next_shape = [0,0]
 
-        # self.graph()
-
-    def graph(self):
-        self.ax.clear()
-        self.ax.set_title("RANSAC", fontsize=14, fontweight="bold")
-        self.ax.set_xlabel("X (m)", fontsize=11)
-        self.ax.set_ylabel("Y (m)", fontsize=11)
-        self.ax.set_xlim(-6, 6)
-        self.ax.set_ylim(-6, 6)
-        self.ax.grid(True, alpha=0.3)
-
-        # current buffer 
-        if len(self.current_buffer) > 0:
-            pts  = np.vstack(self.current_buffer)
-            self.ax.scatter(pts[:, 0], pts[:, 1], s=8)
-
-        # right buffer 
-        if  len(self.right_buffer) > 0:
-            rpts  = np.vstack(self.right_buffer)
-            self.ax.scatter(rpts[:, 0], rpts[:, 1], s=8)
-
-        # left buffer 
-        if  len(self.left_buffer) > 0:
-            lpts  = np.vstack(self.left_buffer)
-            self.ax.scatter(lpts[:, 0], lpts[:, 1], s=8)
-
-        # plot robot if known
-        if self.current_x is not None and self.current_y is not None and self.current_yaw is not None:
-            self.ax.plot(self.current_x, self.current_y, "bo", markersize=6)
-            self.ax.arrow(
-                self.current_x,
-                self.current_y,
-                0.5 * math.cos(self.current_yaw),
-                0.5 * math.sin(self.current_yaw),
-                head_width=0.05,
-                color="blue",
-            )
-
-        self.ax.legend()
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
 
     # Ransac
     def ransac_line(self, points):
@@ -760,10 +701,6 @@ class Ransac(Node):
     
     # ---------------- cleanup ---------------- #
     def destroy_node(self):
-        try:
-            plt.close(self.fig)
-        except Exception:
-            pass
         super().destroy_node()
 
 
