@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'task4c_3857'
+package_name = 'task4c_3578'
 
 setup(
     name=package_name,
