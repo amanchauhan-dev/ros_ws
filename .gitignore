@@ -6,3 +6,6 @@ __pycache__
 .Python
 .pytest_cache
 .coverage
+
+
+test-code/*
