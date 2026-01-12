@@ -30,7 +30,7 @@ from nav_msgs.msg import Odometry
 
 # ---------- Lane limits (world frame) ----------
 LANE_MIN_X = 0.8
-LANE_MAX_X = 4.2
+LANE_MAX_X = 4.3
 
 # ---------- Side sector definition (robot frame) ----------
 LEFT_SECTOR_ANGLE   = math.pi / 2
@@ -45,9 +45,84 @@ MIN_LIDAR_RANGE     = 0.05    # ignore invalid / too-close returns
 MAX_POINT_DISTANCE  = 1.5     # keep only near points (current frame)
 WALL_Y_CLEARANCE    = 0.02    # ignore wall too close to robot Y
 
+
+
 # ============================================================
 # ===================== HELPERS ==============================
 # ============================================================
+
+def estimate_lane_start_x_from_buffer(
+    side_buffer,
+    num_points: int = 50
+) -> float | None:
+    """
+    Estimate lane start X using the first N points
+    from a side buffer (left or right).
+
+    Returns:
+        lane_start_x or None
+    """
+    if side_buffer is None or len(side_buffer) < num_points:
+        return None
+
+    pts = np.asarray(side_buffer[:num_points])
+    return float(np.median(pts[:, 0]))
+
+def get_region_id_from_side_buffer(
+    x: float,
+    y: float,
+    side_buffer,
+    lane_length: float = 3.0,
+    segments: int = 4
+) -> int | None:
+    """
+    Determine region ID (1–8) using side buffer
+    to infer lane start.
+
+    Regions:
+        y < 0 → 1–4
+        y > 0 → 5–8
+    """
+
+    lane_start_x = estimate_lane_start_x_from_buffer(side_buffer)
+    if lane_start_x is None:
+        return None
+
+    seg_len = lane_length / segments
+    dx = x - lane_start_x
+
+    # ---------- FORWARD ----------
+    if 0.0 <= dx <= lane_length:
+        seg = int(dx / seg_len)
+        seg = min(seg, segments - 1)
+
+        if y < 0:
+            return seg + 1        # 1–4
+        elif y > 0:
+            return seg + 5        # 5–8
+        else:
+            return None
+
+    # ---------- REVERSE ----------
+    if -lane_length <= dx < 0.0:
+        seg = int((-dx) / seg_len)
+        seg = min(seg, segments - 1)
+
+        if y < 0:
+            return 4 - seg        # 4 → 1
+        elif y > 0:
+            return 8 - seg        # 8 → 5
+        else:
+            return None
+
+    return None
+
+
+def is_plant_lane(x, y):
+    if LANE_MIN_X < x < LANE_MAX_X:
+        return True
+    else:
+        False
 
 
 def get_region_id(x: float, y: float) -> int | None:
@@ -358,9 +433,9 @@ class SideWallPreview(Node):
                 math.atan2(py - self.robot_y, px - self.robot_x) - self.robot_yaw
             )
 
-            if abs(angle - LEFT_SECTOR_ANGLE) <= SECTOR_HALF_WIDTH:
+            if abs(angle - LEFT_SECTOR_ANGLE) <= SECTOR_HALF_WIDTH and is_plant_lane(px, py):
                 left_frame.append([px, py])
-            elif abs(angle - RIGHT_SECTOR_ANGLE) <= SECTOR_HALF_WIDTH:
+            elif abs(angle - RIGHT_SECTOR_ANGLE) <= SECTOR_HALF_WIDTH and is_plant_lane(px, py):
                 right_frame.append([px, py])
 
         # Filter ONLY current frame
@@ -505,7 +580,7 @@ class SideWallPreview(Node):
             used_lines = shape_L["lines"]
             shape_points = np.vstack([l["inliers"] for l in used_lines])
             cx, cy = shape_points.mean(axis=0)
-            id = get_region_id(cx, cy)
+            id = get_region_id_from_side_buffer(cx, cy, self.left_points_buffer)
             self.left_shape.append({
                 "type": shape_type,
                 "center": (cx, cy),
@@ -532,7 +607,7 @@ class SideWallPreview(Node):
             used_lines = shape_R["lines"]
             shape_points = np.vstack([l["inliers"] for l in used_lines])
             cx, cy = shape_points.mean(axis=0)
-            id = get_region_id(cx, cy)
+            id = get_region_id_from_side_buffer(cx, cy, self.right_points_buffer)
             self.right_shape.append({
                 "type": shape_type,
                 "center": (cx, cy),

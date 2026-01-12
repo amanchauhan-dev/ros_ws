@@ -49,21 +49,49 @@ WALL_Y_CLEARANCE    = 0.02    # ignore wall too close to robot Y
 # ===================== HELPERS ==============================
 # ============================================================
 
+PLANTS_TRACKS = [
+    [2.333, -1.877],   # 0
+    [1.301, -0.8475],  # 1
+    [2.0115, -0.8475], # 2
+    [2.748, -0.8475],  # 3
+    [3.573, -0.8475],  # 4
+    
+    [1.301,  0.856],   # 5
+    [2.2115, 0.856],   # 6
+    [3.048,  0.856],   # 7
+    [4.0,  0.856],   # 8
+]
+
 
 def get_region_id(x: float, y: float) -> int | None:
-    if not (0.0 <= x < 4.0):
-        return None
+    """
+    Return nearest PLANTS_TRACKS index (0–8) based on (x, y).
 
-    # x bucket: 0,1,2,3
-    x_bucket = int(x)
+    Rules:
+    - y < 0  → search IDs 0–4
+    - y > 0  → search IDs 5–8
+    """
 
+    # decide valid ID range based on side
     if y < 0:
-        return x_bucket + 1          # 1–4
+        valid_ids = range(0, 5)     # 0–4
     elif y > 0:
-        return x_bucket + 5          # 5–8
+        valid_ids = range(5, 9)     # 5–8
     else:
-        return None                  # exactly on centerline
+        return None                 # exactly on centerline
 
+    best_id = None
+    best_dist = float("inf")
+
+    for idx in valid_ids:
+        px, py = PLANTS_TRACKS[idx]
+        d = math.hypot(x - px, y - py)
+
+        if d < best_dist:
+            best_dist = d
+            best_id = idx
+
+    return best_id
 
 def line_direction(model):
     """Unit direction vector of line ax+by+c=0"""

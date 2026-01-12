@@ -17,13 +17,12 @@ Logic:
 
 import math
 import numpy as np
-import matplotlib.pyplot as plt
 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
-
+from std_msgs.msg import Bool, String
 # ============================================================
 # ===================== CONSTANTS ============================
 # ============================================================
@@ -45,25 +44,63 @@ MIN_LIDAR_RANGE     = 0.05    # ignore invalid / too-close returns
 MAX_POINT_DISTANCE  = 1.5     # keep only near points (current frame)
 WALL_Y_CLEARANCE    = 0.02    # ignore wall too close to robot Y
 
+
+# Plant and shape freq
+SHAPE_PLANT_ID_MIN_FREQ = 4
+ROBOT_PLANT_DIST_TOL = 0.15
+
+
 # ============================================================
 # ===================== HELPERS ==============================
 # ============================================================
 
+PLANTS_TRACKS = [
+    [2.333, -1.877],   # 0
+    [1.301, -0.8475],  # 1
+    [2.0115, -0.8475], # 2
+    [2.748, -0.8475],  # 3
+    [3.573, -0.8475],  # 4
+    
+    [1.301,  0.856],   # 5
+    [2.2115, 0.856],   # 6
+    [3.048,  0.856],   # 7
+    [4.0,  0.856],   # 8
+]
+
+DIST_TOL = 1.0
 
 def get_region_id(x: float, y: float) -> int | None:
-    if not (0.0 <= x < 4.0):
-        return None
+    """
+    Return nearest PLANTS_TRACKS index (0–8) based on (x, y).
 
-    # x bucket: 0,1,2,3
-    x_bucket = int(x)
+    Rules:
+    - y < 0  → search IDs 0–4
+    - y > 0  → search IDs 5–8
+    """
 
+    # decide valid ID range based on side
     if y < 0:
-        return x_bucket + 1          # 1–4
+        valid_ids = range(0, 5)     # 0–4
     elif y > 0:
-        return x_bucket + 5          # 5–8
+        valid_ids = range(5, 9)     # 5–8
     else:
-        return None                  # exactly on centerline
+        return None                 # exactly on centerline
 
+    best_id = None
+    best_dist = float("inf")
+
+    for idx in valid_ids:
+        px, py = PLANTS_TRACKS[idx]
+        d = math.hypot(x - px, y - py)
+
+        if d < best_dist:
+            best_dist = d
+            best_id = idx
+
+    if best_dist <= DIST_TOL:
+        return best_id
+
+    return -1
 
 def line_direction(model):
     """Unit direction vector of line ax+by+c=0"""
@@ -117,7 +154,7 @@ def detect_shape_from_lines(
     for a in angles:
         if abs(a["angle"] - 60) < angle_tol or abs(a["angle"] - 120) < angle_tol:
             return {
-                "type": "triangle",
+                "type": 0,
                 "confidence": max(0.0, 1.0 - abs(a["angle"] - 60) / angle_tol),
                 "lines": [a]
             }
@@ -133,7 +170,7 @@ def detect_shape_from_lines(
 
     if verticals:
         return {
-            "type": "square",
+            "type": 1,
             "confidence": 1.0,
             "lines": verticals
         }
@@ -270,6 +307,11 @@ class SideWallPreview(Node):
         # Subscribers
         self.create_subscription(LaserScan, "/scan", self.scan_callback, 10)
         self.create_subscription(Odometry, "/odom", self.odom_callback, 10)
+        self.stop_pub = self.create_publisher(Bool, "/to_stop", 10)
+        self.detection_pub = self.create_publisher(String, "/detection_status", 10)
+
+        self.stop_active = False
+        self.stop_end_time = None
 
         # Robot state
         self.robot_x = None
@@ -287,12 +329,13 @@ class SideWallPreview(Node):
         self.cur_left_buffer = []
         self.cur_right_buffer = []
 
-        self.left_shape = []
-        self.right_shape = []
+        self.left_shape = [[0,0], [0]*9]
 
-        # Plot setup
-        plt.ion()
-        self.fig, self.ax = plt.subplots(figsize=(8, 8))
+        self.right_shape = [[0,0], [0]*9]
+
+        self.last_id = -1
+        self.last_shape = -1
+
         self.create_timer(0.1, self.plot_loop)
 
     # ------------------------------------------------
@@ -313,6 +356,9 @@ class SideWallPreview(Node):
             self.cur_right_buffer = []
             self.last_buffer_x = None
             self.last_buffer_y = None
+
+            self.last_id = -1
+            self.last_shape = -1
         else:
             self.in_lane = True
 
@@ -380,28 +426,8 @@ class SideWallPreview(Node):
         self.last_buffer_y = self.robot_y
 
     # ------------------------------------------------
-    # Plot helpers
+    #  helpers
     # ------------------------------------------------
-
-    def draw_horizontal_wall(self, points, color):
-        """
-        Draw horizontal wall (slope = 0) using mean Y.
-        """
-        if points.shape[0] < 5:
-            return
-
-        mean_y = np.mean(points[:, 1])
-
-        # Ignore if wall is too close to robot centerline
-        if abs(mean_y - self.robot_y) < WALL_Y_CLEARANCE:
-            return
-
-        x_min = points[:, 0].min()
-        x_max = points[:, 0].max()
-
-        self.ax.plot([x_min, x_max], [mean_y, mean_y],
-                     color=color, linewidth=3)
-        
 
 
     def get_wall_mean_y(self, points):
@@ -409,32 +435,110 @@ class SideWallPreview(Node):
             return None
         return float(np.mean(np.asarray(points)[:, 1]))
     
-    def plot_ransac_line(self, model, inliers, color="black", lw=3):
-        a, b, c = model
 
-        # direction vector of line
-        d = np.array([b, -a], dtype=float)
-        d /= np.linalg.norm(d)
+    def trigger_stop(self, id, shape):
+        if self.stop_active:
+            return
+  
+        self.last_id = id
+        self.last_shape = shape
 
-        # closest point to origin
-        p0 = np.array([-a*c/(a*a+b*b), -b*c/(a*a+b*b)])
+        msg = Bool()
+        msg.data = True
+        self.stop_pub.publish(msg)
 
-        # project inliers to get segment
-        t = np.dot(inliers - p0, d)
-        p1 = p0 + d * t.min()
-        p2 = p0 + d * t.max()
+        self.stop_active = True
+        self.stop_end_time = self.get_clock().now().nanoseconds + int(2e9)
+        
+        self.get_logger().info("STOP triggered for 2 seconds")
 
-        self.ax.plot([p1[0], p2[0]], [p1[1], p2[1]],
-                color=color, linewidth=lw)
+
+    def check_and_trigger_stop_by_x(self):
+        if self.stop_active or self.robot_x is None:
+            return
+    
+        # ---------------- LEFT SIDE ----------------
+        left_counts = np.array(self.left_shape[1])
+    
+        left_pid = int(np.argmax(left_counts))
+        left_freq = left_counts[left_pid]
+
+        if left_freq > SHAPE_PLANT_ID_MIN_FREQ:
+            plant_x = PLANTS_TRACKS[left_pid][0]
+            if abs(self.robot_x - plant_x) < ROBOT_PLANT_DIST_TOL:
+                if self.left_shape[0][0] > self.left_shape[0][1]:
+                    shape = 0
+                else:
+                    shape = 1 
+                self.trigger_stop(left_pid, shape = shape)
+                return
+    
+        # ---------------- RIGHT SIDE ----------------
+        right_counts = np.array(self.right_shape[1])
+    
+        right_pid = int(np.argmax(right_counts))
+        right_freq = right_counts[right_pid]
+    
+        if right_freq > SHAPE_PLANT_ID_MIN_FREQ:
+            plant_x = PLANTS_TRACKS[right_pid][0]
+            if abs(self.robot_x - plant_x) < ROBOT_PLANT_DIST_TOL:
+                if self.right_shape[0][0] > self.right_shape[0][1]:
+                    shape = 0
+                else:
+                    shape = 1 
+                self.trigger_stop(right_pid,  shape=shape)
+                return
+    
 
     # ------------------------------------------------
-    # Plot loop
+    #  loop
     # ------------------------------------------------
+    def publish_detection_status(self):
+        msg = String()
+
+        # decide label
+        if self.last_id == 0:
+            label = "DOCK_STATION"
+        elif self.last_shape == 0:
+            label = "FERTILIZER_REQUIRED"
+        else:
+            label = "BAD_HEALTH"
+
+        msg.data = (
+            f"{label},"
+            f"{self.robot_x:.2f},"
+            f"{self.robot_y:.2f},"
+            f"{self.last_id}"
+        )
+
+        self.detection_pub.publish(msg)
+        self.get_logger().info(msg.data)
 
     
     def plot_loop(self):
-        self.ax.clear()
+        # ---------- STOP release logic ----------
+        if self.stop_active:
+            now_ns = self.get_clock().now().nanoseconds
+            # publish
+            self.publish_detection_status()
+            
+            if now_ns >= self.stop_end_time:
+                msg = Bool()
+                msg.data = False
+                self.stop_pub.publish(msg)
 
+                self.stop_active = False
+                self.stop_end_time = None
+
+                # reset shape buffers AFTER stop
+                self.left_shape = [[0, 0], [0]*9]
+                self.right_shape = [[0, 0], [0]*9]
+
+                self.get_logger().info("STOP released, buffers reset")
+            return   # do NOTHING else while stopped
+        self.check_and_trigger_stop_by_x()
+
+        # ransac
         left_pts  = np.asarray(self.left_points_buffer)
         right_pts = np.asarray(self.right_points_buffer)
 
@@ -460,35 +564,6 @@ class SideWallPreview(Node):
                 )
             )
 
-        if left_pts.size:
-            self.ax.scatter(left_pts[:, 0], left_pts[:, 1],
-                            s=1, c="green", alpha=0.6)
-            self.draw_horizontal_wall(left_pts, "darkgreen")
-        
-        if right_pts.size:
-            self.ax.scatter(right_pts[:, 0], right_pts[:, 1],
-                            s=1, c="red", alpha=0.6)
-            self.draw_horizontal_wall(right_pts, "darkred")
-
-        if cur_left.size:
-            self.ax.scatter(cur_left[:, 0], cur_left[:, 1],
-                            s=20, c="blue", alpha=0.6)
-        
-        if cur_right.size:
-            self.ax.scatter(cur_right[:, 0], cur_right[:, 1],
-                            s=20, c="blue", alpha=0.6)
-
-
-        if self.robot_x is not None:
-            self.ax.scatter(self.robot_x, self.robot_y,
-                            s=150, c="blue", edgecolors="black")
-        
-        if len(cur_left) > 10:
-            model_L, inliers_L = ransac_line_fit(cur_left)
-            if model_L is not None:
-                self.plot_ransac_line(model_L, inliers_L, color="darkgreen")
-
-
         # Left side shape
         ransac_lines_L = []
         if len(cur_left) > 10:
@@ -496,7 +571,6 @@ class SideWallPreview(Node):
 
             if model_L is not None and len(inliers_L) > 10:
                 ransac_lines_L.append((model_L, inliers_L))
-                self.plot_ransac_line(model_L, inliers_L, color="darkred")
 
         shape_L = detect_shape_from_lines(ransac_lines_L)
 
@@ -506,14 +580,13 @@ class SideWallPreview(Node):
             shape_points = np.vstack([l["inliers"] for l in used_lines])
             cx, cy = shape_points.mean(axis=0)
             id = get_region_id(cx, cy)
-            self.left_shape.append({
-                "type": shape_type,
-                "center": (cx, cy),
-                "pid":id,
-            })
-            self.get_logger().info(
-                f"Left SHAPE: {shape_type} | confidence={shape_L['confidence']:.2f}  pid = {id}"
-            )
+            if id != -1 and self.last_id != id:
+                self.left_shape[0][shape_type] += 1
+                self.left_shape[1][id] += 1
+
+                self.get_logger().info(
+                    f"LEFT SHAPE: {self.left_shape[0]} | {self.left_shape[1]}"
+                )
             
 
         # right side shape
@@ -523,7 +596,6 @@ class SideWallPreview(Node):
 
             if model_R is not None and len(inliers_R) > 10:
                 ransac_lines_R.append((model_R, inliers_R))
-                self.plot_ransac_line(model_R, inliers_R, color="darkred")
 
         shape_R = detect_shape_from_lines(ransac_lines_R)
 
@@ -533,66 +605,13 @@ class SideWallPreview(Node):
             shape_points = np.vstack([l["inliers"] for l in used_lines])
             cx, cy = shape_points.mean(axis=0)
             id = get_region_id(cx, cy)
-            self.right_shape.append({
-                "type": shape_type,
-                "center": (cx, cy),
-                "pid":id,
-            })
-            self.get_logger().info(
-                f"Right SHAPE: {shape_type} | confidence={shape_R['confidence']:.2f}, pid = {id}"
-            )
+            if id !=-1 and self.last_id != id:
+                self.right_shape[0][shape_type] += 1
+                self.right_shape[1][id] += 1
 
-
-        for s in self.left_shape:
-            cx, cy = s["center"]
-            id = s["pid"]
-            self.plot_shape_marker(cx, cy, s["type"], id)
-
-        for s in self.right_shape:
-            cx, cy = s["center"]
-            id = s["pid"]
-            self.plot_shape_marker(cx, cy, s["type"], id)
-
-
-        # plot
-        self.ax.set_title("Left / Right Lane Walls (Mean-Y model)")
-        self.ax.set_aspect("equal")
-        self.ax.grid(True)
-
-        plt.pause(0.001)
-
-
-    def plot_shape_marker(self, cx, cy, shape_type, id):
-        """
-        Plot shape ID as text at (cx, cy).
-        """
-    
-        if shape_type == "square":
-            color = "purple"
-        elif shape_type == "triangle":
-            color = "orange"
-        else:
-            return
-    
-        self.ax.text(
-            cx, cy,
-            str(id),
-            color=color,
-            fontsize=11,
-            fontweight="bold",
-            ha="center",
-            va="center",
-            zorder=10,
-            bbox=dict(
-                boxstyle="round,pad=0.25",
-                facecolor="white",
-                edgecolor=color,
-                linewidth=1.2,
-                alpha=0.9
-            )
-        )
-    
-
+                self.get_logger().info(
+                    f"RIGHT SHAPE: {self.right_shape[0]} | {self.right_shape[1]}"
+                )
 
 # ============================================================
 
