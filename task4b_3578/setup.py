@@ -32,6 +32,7 @@ setup(
             # navigation
             "nav_final_v1 = task4b_3578.nav_final_v1:main",
             "nav_final_v2 = task4b_3578.nav_final_v2:main",
+            "nav_final_v3 = task4b_3578.nav_final_v3:main",
         ],
     },
 )
