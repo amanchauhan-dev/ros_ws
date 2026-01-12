@@ -27,11 +27,6 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            "shape_v1 = task4b_3578.shape_v1:main",
-            "shape_v2 = task4b_3578.shape_v2:main",
-            "shape_graph = task4b_3578.shape_graph:main",
-            "shape_test = task4b_3578.shape_graph_test:main",
-
             # final
             "shape_final_v1 = task4b_3578.shape_final_v1:main",
         ],
