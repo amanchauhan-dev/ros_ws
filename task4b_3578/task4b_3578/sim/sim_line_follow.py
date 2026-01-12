@@ -28,7 +28,6 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
 import matplotlib.pyplot as plt
-from nav_kc3578.ransac.ransac_shape_detector import RansacShapeDetector
 # ============================================================
 # =========================== CONFIG =========================
 # ============================================================
@@ -113,7 +112,6 @@ class LineFollower(Node):
         self.create_subscription(Odometry, ODOM_TOPIC, self.odom_cb, 10)
         self.create_subscription(LaserScan, SCAN_TOPIC, self.scan_cb, 10)
 
-        self.detector = RansacShapeDetector()
         # Robot state
         self.x = -1.5
         self.y = -5.6
@@ -147,18 +145,6 @@ class LineFollower(Node):
     # ========================================================
 
     def control_loop(self):
-        self.get_logger().info(f"Right status: {self.detector.right_shape_votes} {self.detector.right_plant_votes}")
-        self.get_logger().info(f"Left status: {self.detector.left_shape_votes} {self.detector.left_plant_votes}")
-
-
-        result = self.detector.update(
-            robot_pose=(self.x, self.y, self.yaw),
-            lidar_global_points=self.lidar_pts
-        )
-
-        if result:
-            self.get_logger().info(f"Detection: {result}")
-            print(result)
         twist = Twist()
 
         # ---- trajectory logging (ONCE per tick) ----

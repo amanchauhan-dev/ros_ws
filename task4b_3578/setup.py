@@ -27,8 +27,10 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            # final
+            # shape
             "shape_final_v1 = task4b_3578.shape_final_v1:main",
+            # navigation
+            "nav_final_v1 = task4b_3578.nav_final_v1:main",
         ],
     },
 )
