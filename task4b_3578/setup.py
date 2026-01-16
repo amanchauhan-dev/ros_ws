@@ -27,6 +27,9 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            # simulation
+            "sim_nav_final_v1 = task4b_3578.sim.sim_nav_final_v1:main",
+            "sim_shape = task4b_3578.sim.sim_shape:main",
             # shape
             "shape_final_v1 = task4b_3578.shape_final_v1:main",
             # navigation

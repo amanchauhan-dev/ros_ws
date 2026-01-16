@@ -28,7 +28,9 @@ setup(
     entry_points={
         'console_scripts': [
             "nav = task4c_3578.nav:main",
-            "shape = task4c_3578.shape:main"
+            "shape = task4c_3578.shape:main",
+            "manu = task4c_3578.task4C_manipulation:main",
+            "perp = task4c_3578.task4C_preception:main",
         ],
     },
 )

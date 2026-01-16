@@ -161,6 +161,7 @@ class LineFollower(Node):
 
         if self.to_stop:
             self.cmd_pub.publish(twist)
+            return
 
         self.trajectory.append((self.x, self.y))
         self.log_timer += CONTROL_DT
