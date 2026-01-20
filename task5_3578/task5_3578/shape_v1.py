@@ -46,9 +46,9 @@ WALL_Y_CLEARANCE    = 0.02    # ignore wall too close to robot Y
 
 
 # Plant and shape freq
-SHAPE_PLANT_ID_MIN_FREQ = 4
+SHAPE_PLANT_ID_MIN_FREQ = 3
 ROBOT_PLANT_DIST_TOL = 0.15
-
+SHAPE_ANGLE_TOLERANCE = 20
 
 # ============================================================
 # ===================== HELPERS ==============================
@@ -119,7 +119,7 @@ def angle_to_horizontal(model):
 
 def detect_shape_from_lines(
     ransac_lines,
-    angle_tol=15
+    angle_tol=SHAPE_ANGLE_TOLERANCE
 ):
     """
     Detect TRIANGLE or SQUARE using ONLY angle to horizontal wall.
@@ -149,17 +149,6 @@ def detect_shape_from_lines(
     ]
 
     # =====================================================
-    # TRIANGLE: ANY line near 60° (or 120°)
-    # =====================================================
-    for a in angles:
-        if abs(a["angle"] - 60) < angle_tol or abs(a["angle"] - 120) < angle_tol:
-            return {
-                "type": 0,
-                "confidence": max(0.0, 1.0 - abs(a["angle"] - 60) / angle_tol),
-                "lines": [a]
-            }
-
-    # =====================================================
     # SQUARE: AT LEAST ONE strong ~90° line
     # (since triangle already excluded)
     # =====================================================
@@ -174,6 +163,18 @@ def detect_shape_from_lines(
             "confidence": 1.0,
             "lines": verticals
         }
+    
+    # =====================================================
+    # TRIANGLE: ANY line near 60° (or 120°)
+    # =====================================================
+    for a in angles:
+        if abs(a["angle"] - 60) < angle_tol or abs(a["angle"] - 120) < angle_tol:
+            return {
+                "type": 0,
+                "confidence": max(0.0, 1.0 - abs(a["angle"] - 60) / angle_tol),
+                "lines": [a]
+            }
+
 
     return None
 
@@ -354,6 +355,8 @@ class SideWallPreview(Node):
             "80":0,
             "81":0,
         }
+        self.status_published = False
+
 
         self.create_timer(0.1, self.plot_loop)
 
@@ -541,9 +544,12 @@ class SideWallPreview(Node):
         if self.stop_active:
             now_ns = self.get_clock().now().nanoseconds
             # publish
-            
-            if now_ns >= self.stop_end_time:
+            if not self.status_published:
                 self.publish_detection_status()
+                self.status_published = True
+
+            if now_ns >= self.stop_end_time:
+                self.status_published = False
                 msg = Bool()
                 msg.data = False
                 self.stop_pub.publish(msg)
