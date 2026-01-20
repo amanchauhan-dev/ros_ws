@@ -13,9 +13,9 @@ setup(
     ],
     install_requires=[
         'setuptools',
-        # 'numpy',
-        # 'opencv-python',
-        # 'scipy'
+        'numpy',
+        'opencv-python',
+        'scipy'
     ],
     zip_safe=True,
     maintainer='aman',
@@ -33,6 +33,12 @@ setup(
             "shape = task5_3578.nav.shape:main",
             "shape_v1 = task5_3578.nav.shape_v1:main",
             # raghav
+            "fi = task5_3578.ferti_init:main",
+            "fus = task5_3578.ferti_using_servo:main",
+            "p = task5_3578.prescription:main",
+            "tmcr = task5_3578.task4a_motion_check_real:main",
+            "t = task5_3578.task4A:main",
+            "tpr = task5_3578.task4c_pre_run:main",
         ],
     },
 )
