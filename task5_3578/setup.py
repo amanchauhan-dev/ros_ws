@@ -11,7 +11,12 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
     ],
-    install_requires=['setuptools'],
+    install_requires=[
+        'setuptools',
+        # 'numpy',
+        # 'opencv-python',
+        # 'scipy'
+    ],
     zip_safe=True,
     maintainer='aman',
     maintainer_email='amanchauhan0435@gmail.com',
@@ -24,9 +29,9 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            "nav = task5_3578.nav:main",
-            "shape = task5_3578.shape:main",
-            "shape_v1 = task5_3578.shape_v1:main",
+            "nav = task5_3578.nav.nav:main",
+            "shape = task5_3578.nav.shape:main",
+            "shape_v1 = task5_3578.nav.shape_v1:main",
         ],
     },
 )
