@@ -24,6 +24,9 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            "nav = task5_3578.nav:main",
+            "shape = task5_3578.shape:main",
+            "shape_v1 = task5_3578.shape_v1:main",
         ],
     },
 )
