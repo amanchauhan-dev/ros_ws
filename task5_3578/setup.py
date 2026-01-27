@@ -29,16 +29,23 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            # nav scripts
+            # V1
             "nav = task5_3578.nav.nav:main",
             "shape = task5_3578.nav.shape:main",
             "shape_v1 = task5_3578.nav.shape_v1:main",
-            # raghav
-            "fi = task5_3578.ferti_init:main",
-            "fus = task5_3578.ferti_using_servo:main",
-            "p = task5_3578.prescription:main",
-            "tmcr = task5_3578.task4a_motion_check_real:main",
-            "t = task5_3578.task4A:main",
-            "tpr = task5_3578.task4c_pre_run:main",
+            "shape_viz = task5_3578.nav.shape_viz:main",
+            # V2
+            "nav_2 = task5_3578.nav_2.nav:main",
+            "shape_2 = task5_3578.nav_2.shape:main",
+            "shape_v2 = task5_3578.nav_2.shape_v1:main",
+            # arm scripts
+            "fi = task5_3578.arm.ferti_init:main",
+            "fus = task5_3578.arm.ferti_using_servo:main",
+            "p = task5_3578.arm.prescription:main",
+            "tmcr = task5_3578.arm.task4a_motion_check_real:main",
+            "t = task5_3578.arm.task4A:main",
+            "tpr = task5_3578.arm.task4c_pre_run:main",
         ],
     },
 )
