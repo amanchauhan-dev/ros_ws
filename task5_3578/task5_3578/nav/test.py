@@ -71,6 +71,55 @@ PLANTS_TRACKS = [
 
 DIST_TOL = 1.0
 
+
+def get_track_id(
+    robot_x: float,
+    robot_y: float,
+    moving_away: bool,
+    LANE_MIN_X: float,
+    LANE_MAX_X: float,
+    track_size: float,
+    gap: float,
+):
+    """
+    Returns lane ID based on robot position and direction.
+
+    Away from origin:
+      y = -0.8  -> IDs 1–4 (left to right)
+      y =  0.8  -> IDs 5–8 (left to right)
+
+    Toward origin:
+      y = -0.5  -> IDs 4–1 (right to left)
+      y =  0.5  -> IDs 8–5 (right to left)
+    """
+
+    # decide which x-origin to use
+    if moving_away:
+        x_base = LANE_MIN_X
+        index = int((robot_x - x_base) // track_size)
+    else:
+        x_base = LANE_MAX_X
+        index = int((x_base - robot_x) // track_size)
+
+    if not (0 <= index < 4):
+        return None  # outside lanes
+
+    if moving_away:
+        if abs(robot_y + 0.8) < 1e-3:
+            return index + 1          # 1–4
+        if abs(robot_y - 0.8) < 1e-3:
+            return index + 5          # 5–8
+    else:
+        if abs(robot_y + 0.5) < 1e-3:
+            return 4 - index          # 4–1
+        if abs(robot_y - 0.5) < 1e-3:
+            return 8 - index          # 8–5
+
+    return None
+
+
+
+
 def get_region_id(x: float, y: float) -> int | None:
     """
     Return nearest PLANTS_TRACKS index (0–8) based on (x, y).
@@ -658,31 +707,42 @@ class SideWallPreview(Node):
 
         self.ax.clear()
 
+        id = get_track_id(
+            self.robot_x,
+            self.robot_y,
+            moving_away=(abs(self.robot_yaw) < math.pi / 2),
+            LANE_MIN_X=LANE_MIN_X,
+            LANE_MAX_X=LANE_MAX_X,
+            track_size=0.7,
+            gap=0.05,
+        )
+        print(f"Robot at x={self.robot_x:.2f}, y={self.robot_y:.2f}, track ID={id} direction {(abs(self.robot_yaw) < math.pi / 2)}")
+
         # robot
         self.ax.scatter(self.robot_x, self.robot_y, c="black", s=80, marker="x", label="Robot")
 
         color = ["green", "red", "green", "red"]
         track_size = 0.7
         gap = 0.05
-        # 1-4
+        # id: 1-4 if robot moving away from (0,0)
         for i in range(4):
             x2 = LANE_MIN_X + ((i+1) * track_size)
             x1 = LANE_MIN_X + (i * track_size) + gap
             self.ax.plot([x1, x2], [-0.8, -0.8], c=color[i], linewidth=0.5)
 
-        # 5-8      
+        # id:5-8  if robot moving away from (0,0)
         for i in range(4):
             x2 = LANE_MIN_X + ((i+1) * track_size)
             x1 = LANE_MIN_X + (i * track_size) + gap
             self.ax.plot([x1, x2], [0.8, 0.8], c=color[i], linewidth=0.5)
 
-        # 4-1
+        # id:4-1 if robot moving toward from (0,0)
         for i in range(4):
             x2 = LANE_MAX_X - ((i+1) * track_size)
             x1 = LANE_MAX_X - (i * track_size) - gap
             self.ax.plot([x1, x2], [-0.5, -0.5], c=color[i], linewidth=0.5)
 
-        # 8-5
+        # id:8-5 if robot moving toward from (0,0)
         for i in range(4):
             x2 = LANE_MAX_X - ((i+1) * track_size)
             x1 = LANE_MAX_X - (i * track_size) - gap
