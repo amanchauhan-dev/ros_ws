@@ -72,86 +72,130 @@ PLANTS_TRACKS = [
 DIST_TOL = 1.0
 
 
-def get_track_id(
-    robot_x: float,
-    robot_y: float,
-    moving_away: bool,
-    LANE_MIN_X: float,
-    LANE_MAX_X: float,
-    track_size: float,
-    gap: float,
+TRACK_ONE_Y = -0.8
+TRACK_TWO_Y = 0.8
+def get_lane_from_y(robot_y: float) -> int | None:
+    if -2.5 <= robot_y <= -1.0:
+        return 1
+    if -1.0 <= robot_y <= 1.0:
+        return 2
+    if 1.0 <= robot_y <= 2.5:
+        return 3
+    return None
+
+def generate_track_x_ranges(
+    lane_min_x,
+    lane_max_x,
+    track_size,
+    track_gap,
+    start_lane_id,
+    reverse=False
 ):
-    """
-    Returns lane ID based on robot position and direction.
+    ranges = []
 
-    Away from origin:
-      y = -0.8  -> IDs 1–4 (left to right)
-      y =  0.8  -> IDs 5–8 (left to right)
+    for i in range(4):
+        if not reverse:
+            x1 = lane_min_x + (i * track_size) + track_gap
+            x2 = lane_min_x + ((i + 1) * track_size)
+            lane_id = start_lane_id + i
+        else:
+            x1 = lane_max_x - (i * track_size) - track_gap
+            x2 = lane_max_x - ((i + 1) * track_size)
+            lane_id = start_lane_id - i
 
-    Toward origin:
-      y = -0.5  -> IDs 4–1 (right to left)
-      y =  0.5  -> IDs 8–5 (right to left)
-    """
+        ranges.append((x1, x2, lane_id))
 
-    # decide which x-origin to use
-    if moving_away:
-        x_base = LANE_MIN_X
-        index = int((robot_x - x_base) // track_size)
-    else:
-        x_base = LANE_MAX_X
-        index = int((x_base - robot_x) // track_size)
+    return ranges
 
-    if not (0 <= index < 4):
-        return None  # outside lanes
+TRACK_SIZE = 0.7
+TRACK_GAP = 0.05
 
-    if moving_away:
-        if abs(robot_y + 0.8) < 1e-3:
-            return index + 1          # 1–4
-        if abs(robot_y - 0.8) < 1e-3:
-            return index + 5          # 5–8
-    else:
-        if abs(robot_y + 0.5) < 1e-3:
-            return 4 - index          # 4–1
-        if abs(robot_y - 0.5) < 1e-3:
-            return 8 - index          # 8–5
+AWAY_TRACK_ONE_X   = generate_track_x_ranges(LANE_MIN_X, LANE_MAX_X, TRACK_SIZE, TRACK_GAP, start_lane_id=1, reverse=False)
+TOWARD_TRACK_ONE_X = generate_track_x_ranges(LANE_MIN_X, LANE_MAX_X, TRACK_SIZE, TRACK_GAP, start_lane_id=4, reverse=True)
 
+AWAY_TRACK_TWO_X   = generate_track_x_ranges(LANE_MIN_X, LANE_MAX_X, TRACK_SIZE, TRACK_GAP, start_lane_id=5, reverse=False)
+TOWARD_TRACK_TWO_X = generate_track_x_ranges(LANE_MIN_X, LANE_MAX_X, TRACK_SIZE, TRACK_GAP, start_lane_id=8, reverse=True)
+
+def get_lane_from_y(robot_y: float) -> int | None:
+    if -2.0 <= robot_y <= -1.0:
+        return 1
+    if -0.5 <= robot_y <= 0.5:
+        return 2
+    if 1.0 <= robot_y <= 2.0:
+        return 3
     return None
 
 
+def _find_lane_id(x, ranges):
+    for x1, x2, lane_id in ranges:
+        if x2 <= x <= x1 or x1 <= x <= x2:
+            return lane_id
+    return None
 
+# return track1id, trcak2id or None, None or trackoneod, None or None, track2id
+def get_track_id(
+    x: float,
+    y: float,
+    robot_y: float,
+    moving_away: bool,
+):
+    left = None
+    right = None
+    lane = get_lane_from_y(robot_y=robot_y)
+    
+    if not lane:
+        return None, None
+    
+    # dock
+    if y < -1.5:
+        if moving_away:
+            return None, 0
+        else:
+            return 0, None
 
-def get_region_id(x: float, y: float) -> int | None:
-    """
-    Return nearest PLANTS_TRACKS index (0–8) based on (x, y).
-
-    Rules:
-    - y < 0  → search IDs 0–4
-    - y > 0  → search IDs 5–8
-    """
-
-    # decide valid ID range based on side
-    if y < 0:
-        valid_ids = range(0, 5)     # 0–4
-    elif y > 0:
-        valid_ids = range(5, 9)     # 5–8
+    # For plant tracks
+    if moving_away:
+        t1_ranges = AWAY_TRACK_ONE_X
+        t2_ranges = AWAY_TRACK_TWO_X
     else:
-        return None                 # exactly on centerline
+        t1_ranges = TOWARD_TRACK_ONE_X
+        t2_ranges = TOWARD_TRACK_TWO_X
 
-    best_id = None
-    best_dist = float("inf")
+    # lane 1 → only track 1
+    if lane == 1:
+        id = _find_lane_id(x, t1_ranges)
+        if moving_away:
+            left = id
+        else:
+            right = id
 
-    for idx in valid_ids:
-        px, py = PLANTS_TRACKS[idx]
-        d = math.hypot(x - px, y - py)
+    # lane 2 → both tracks
+    elif lane == 2:
+        t1id = _find_lane_id(x, t1_ranges)
+        t2id = _find_lane_id(x, t2_ranges)
+        if moving_away:
+            left = t2id
+            right = t1id
+        else:
+            right = t2id
+            left = t1id
 
-        if d < best_dist:
-            best_dist = d
-            best_id = idx
+    # lane 3 → only track 2
+    elif lane == 3:
+        id = _find_lane_id(x, t2_ranges)
+        if moving_away:
+            right = id
+        else:
+            left = id
 
-    if best_dist <= DIST_TOL:
-        return best_id
+    else:
+        return None, None
 
-    return -1
+    if left is None and right is None:
+        return None, None
+
+    return left, right
+
 
 def line_direction(model):
     """Unit direction vector of line ax+by+c=0"""
@@ -386,8 +430,10 @@ class SideWallPreview(Node):
         self.cur_right_buffer = []
 
         self.left_shape = [[0,0], [0]*9]
+        self.left_shape_x = None
 
         self.right_shape = [[0,0], [0]*9]
+        self.right_shape_x = None 
 
         self.last_id = -1
         self.last_shape = -1
@@ -543,8 +589,7 @@ class SideWallPreview(Node):
         left_freq = left_counts[left_pid]
 
         if left_freq > SHAPE_PLANT_ID_MIN_FREQ:
-            plant_x = PLANTS_TRACKS[left_pid][0]
-            if abs(self.robot_x - plant_x) < ROBOT_PLANT_DIST_TOL:
+            if abs(self.robot_x - self.left_shape_x) < ROBOT_PLANT_DIST_TOL:
                 if self.left_shape[0][0] > self.left_shape[0][1]:
                     shape = 0
                 else:
@@ -559,8 +604,7 @@ class SideWallPreview(Node):
         right_freq = right_counts[right_pid]
     
         if right_freq > SHAPE_PLANT_ID_MIN_FREQ:
-            plant_x = PLANTS_TRACKS[right_pid][0]
-            if abs(self.robot_x - plant_x) < ROBOT_PLANT_DIST_TOL:
+            if abs(self.robot_x - self.right_shape_x) < ROBOT_PLANT_DIST_TOL:
                 if self.right_shape[0][0] > self.right_shape[0][1]:
                     shape = 0
                 else:
@@ -597,6 +641,7 @@ class SideWallPreview(Node):
 
     
     def plot_loop(self):
+        
         self.visualize()
         # ---------- STOP release logic ----------
         if self.stop_active:
@@ -618,6 +663,8 @@ class SideWallPreview(Node):
                 # reset shape buffers AFTER stop
                 self.left_shape = [[0, 0], [0]*9]
                 self.right_shape = [[0, 0], [0]*9]
+                self.left_shape_x = None
+                self.right_shape_x = None
 
                 self.get_logger().info("STOP released, buffers reset")
             return   # do NOTHING else while stopped
@@ -664,12 +711,18 @@ class SideWallPreview(Node):
             used_lines = shape_L["lines"]
             shape_points = np.vstack([l["inliers"] for l in used_lines])
             cx, cy = shape_points.mean(axis=0)
-            id = get_region_id(cx, cy)
+            # id = get_region_id(cx, cy)
+            id, _ = get_track_id(
+                cx,
+                cy,
+                self.robot_y,
+                moving_away=(abs(self.robot_yaw) < math.pi / 2),
+            )
             if id != -1 and self.last_id != id:
                 if id == 0 or self.detected_hash[f"{id}{shape_type}"] == 0:
                     self.left_shape[0][shape_type] += 1
                     self.left_shape[1][id] += 1
-
+                    self.left_shape_x = cx
                     self.get_logger().info(
                         f"LEFT SHAPE: {self.left_shape[0]} | {self.left_shape[1]}"
                     )            
@@ -689,12 +742,18 @@ class SideWallPreview(Node):
             used_lines = shape_R["lines"]
             shape_points = np.vstack([l["inliers"] for l in used_lines])
             cx, cy = shape_points.mean(axis=0)
-            id = get_region_id(cx, cy)
+            # id = get_region_id(cx, cy)
+            _, id = get_track_id(
+                cx,
+                cy,
+                self.robot_y,
+                moving_away=(abs(self.robot_yaw) < math.pi / 2),
+            )
             if id !=-1 and self.last_id != id:
                 if id == 0 or self.detected_hash[f"{id}{shape_type}"] == 0:
                     self.right_shape[0][shape_type] += 1
                     self.right_shape[1][id] += 1
-
+                    self.right_shape_x = cx
                     self.get_logger().info(
                         f"RIGHT SHAPE: {self.right_shape[0]} | {self.right_shape[1]}"
                     )
@@ -706,17 +765,6 @@ class SideWallPreview(Node):
             return
 
         self.ax.clear()
-
-        id = get_track_id(
-            self.robot_x,
-            self.robot_y,
-            moving_away=(abs(self.robot_yaw) < math.pi / 2),
-            LANE_MIN_X=LANE_MIN_X,
-            LANE_MAX_X=LANE_MAX_X,
-            track_size=0.7,
-            gap=0.05,
-        )
-        print(f"Robot at x={self.robot_x:.2f}, y={self.robot_y:.2f}, track ID={id} direction {(abs(self.robot_yaw) < math.pi / 2)}")
 
         # robot
         self.ax.scatter(self.robot_x, self.robot_y, c="black", s=80, marker="x", label="Robot")
