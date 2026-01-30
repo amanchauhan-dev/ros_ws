@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'ebot_3578'
+package_name = 'arm_3578'
 
 setup(
     name=package_name,
@@ -11,7 +11,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
     ],
-    install_requires=['setuptools', 'numpy',],
+    install_requires=['setuptools'],
     zip_safe=True,
     maintainer='aman',
     maintainer_email='amanchauhan0435@gmail.com',
@@ -24,11 +24,9 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            "nav = ebot_3578.nav:main",
-            "shape = ebot_3578.shape:main",
-            "shape_v1 = ebot_3578.shape_v1:main",
-            "shape_viz = ebot_3578.shape_viz:main",
-            "test = ebot_3578.test:main",
+            "pv1 = arm_3578.precption.preception_new_v1:main",
+            "pv2 = arm_3578.precption.fruit_broadcaster:main",
+            "tmr = arm_3578.task5_ferti_m_real:main"
         ],
     },
 )
