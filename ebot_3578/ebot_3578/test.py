@@ -48,7 +48,7 @@ WALL_Y_CLEARANCE    = 0.02    # ignore wall too close to robot Y
 
 
 # Plant and shape freq
-SHAPE_PLANT_ID_MIN_FREQ = 3
+SHAPE_PLANT_ID_MIN_FREQ = 2
 ROBOT_PLANT_DIST_TOL = 0.15
 SHAPE_ANGLE_TOLERANCE = 20
 
@@ -62,7 +62,7 @@ PLANTS_TRACKS = [
     [2.0115, -0.8475], # 2
     [2.748, -0.8475],  # 3
     [3.573, -0.8475],  # 4
-    
+
     [1.301,  0.856],   # 5
     [2.2115, 0.856],   # 6
     [3.048,  0.856],   # 7
@@ -142,10 +142,10 @@ def get_track_id(
     left = None
     right = None
     lane = get_lane_from_y(robot_y=robot_y)
-    
+
     if not lane:
         return None, None
-    
+
     # dock
     if y < -1.5:
         if moving_away:
@@ -258,7 +258,7 @@ def detect_shape_from_lines(
             "confidence": 1.0,
             "lines": verticals
         }
-    
+
     # =====================================================
     # TRIANGLE: ANY line near 60° (or 120°)
     # =====================================================
@@ -433,7 +433,7 @@ class SideWallPreview(Node):
         self.left_shape_x = None
 
         self.right_shape = [[0,0], [0]*9]
-        self.right_shape_x = None 
+        self.right_shape_x = None
 
         self.last_id = -1
         self.last_shape = -1
@@ -553,18 +553,20 @@ class SideWallPreview(Node):
     # ------------------------------------------------
     #  helpers
     # ------------------------------------------------
+    def is_moving_away(self):
+        return abs(self.robot_yaw) < math.pi / 2
 
 
     def get_wall_mean_y(self, points):
         if points is None or len(points) < 5:
             return None
         return float(np.mean(np.asarray(points)[:, 1]))
-    
+
 
     def trigger_stop(self, id, shape):
         if self.stop_active:
             return
-  
+
         self.last_id = id
         self.last_shape = shape
 
@@ -574,44 +576,53 @@ class SideWallPreview(Node):
 
         self.stop_active = True
         self.stop_end_time = self.get_clock().now().nanoseconds + int(2e9)
-        
+
         self.get_logger().info("STOP triggered for 2 seconds")
 
 
     def check_and_trigger_stop_by_x(self):
         if self.stop_active or self.robot_x is None:
             return
-    
+
         # ---------------- LEFT SIDE ----------------
         left_counts = np.array(self.left_shape[1])
-    
+        val = 0.35
+
         left_pid = int(np.argmax(left_counts))
         left_freq = left_counts[left_pid]
 
         if left_freq > SHAPE_PLANT_ID_MIN_FREQ:
-            if abs(self.robot_x - self.left_shape_x) < ROBOT_PLANT_DIST_TOL:
+            if self.is_moving_away():
+                x = self.left_shape_x + val
+            else:
+                x = self.left_shape_x - val
+            if abs(self.robot_x - x) < ROBOT_PLANT_DIST_TOL:
                 if self.left_shape[0][0] > self.left_shape[0][1]:
                     shape = 0
                 else:
-                    shape = 1 
+                    shape = 1
                 self.trigger_stop(left_pid, shape = shape)
                 return
-    
+
         # ---------------- RIGHT SIDE ----------------
         right_counts = np.array(self.right_shape[1])
-    
+
         right_pid = int(np.argmax(right_counts))
         right_freq = right_counts[right_pid]
-    
+
         if right_freq > SHAPE_PLANT_ID_MIN_FREQ:
-            if abs(self.robot_x - self.right_shape_x) < ROBOT_PLANT_DIST_TOL:
+            if self.is_moving_away():
+                x = self.right_shape_x + val
+            else:
+                x = self.right_shape_x - val
+            if abs(self.robot_x - x) < ROBOT_PLANT_DIST_TOL:
                 if self.right_shape[0][0] > self.right_shape[0][1]:
                     shape = 0
                 else:
-                    shape = 1 
+                    shape = 1
                 self.trigger_stop(right_pid,  shape=shape)
                 return
-    
+
 
     # ------------------------------------------------
     #  loop
@@ -639,10 +650,10 @@ class SideWallPreview(Node):
         self.detection_pub.publish(msg)
         self.get_logger().info(msg.data)
 
-    
+
     def plot_loop(self):
-        
-        self.visualize()
+
+        # self.visualize()
         # ---------- STOP release logic ----------
         if self.stop_active:
             now_ns = self.get_clock().now().nanoseconds
@@ -674,8 +685,8 @@ class SideWallPreview(Node):
         left_pts  = np.asarray(self.left_points_buffer)
         right_pts = np.asarray(self.right_points_buffer)
 
-        cur_left = np.asanyarray(self.cur_left_buffer) 
-        cur_right = np.asanyarray(self.cur_right_buffer) 
+        cur_left = np.asanyarray(self.cur_left_buffer)
+        cur_right = np.asanyarray(self.cur_right_buffer)
 
         # ---------- compute wall positions ----------
         left_wall_y  = self.get_wall_mean_y(left_pts)
@@ -718,14 +729,14 @@ class SideWallPreview(Node):
                 self.robot_y,
                 moving_away=(abs(self.robot_yaw) < math.pi / 2),
             )
-            if id != -1 and self.last_id != id:
+            if id is not None and  id != -1 and self.last_id != id:
                 if id == 0 or self.detected_hash[f"{id}{shape_type}"] == 0:
                     self.left_shape[0][shape_type] += 1
                     self.left_shape[1][id] += 1
                     self.left_shape_x = cx
                     self.get_logger().info(
                         f"LEFT SHAPE: {self.left_shape[0]} | {self.left_shape[1]}"
-                    )            
+                    )
 
         # right side shape
         ransac_lines_R = []
@@ -749,7 +760,8 @@ class SideWallPreview(Node):
                 self.robot_y,
                 moving_away=(abs(self.robot_yaw) < math.pi / 2),
             )
-            if id !=-1 and self.last_id != id:
+
+            if id is not None and id !=-1 and self.last_id != id:
                 if id == 0 or self.detected_hash[f"{id}{shape_type}"] == 0:
                     self.right_shape[0][shape_type] += 1
                     self.right_shape[1][id] += 1

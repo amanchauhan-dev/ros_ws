@@ -53,7 +53,7 @@ def quaternion_to_euler(quaternion):
     # Roll (x-axis rotation)
     sin_roll_cos_pitch = 2.0 * (w_value * x_value + y_value * z_value)
     cos_roll_cos_pitch = 1.0 - 2.0 * (x_value * x_value + y_value * y_value)
-    roll_angle = np.arctan2(sin_roll_cos_pitch, cos_roll_cos_pitch)
+    roll_angle = np.atan2(sin_roll_cos_pitch, cos_roll_cos_pitch)
 
     # Pitch (y-axis rotation)
     sin_pitch = 2.0 * (w_value * y_value - z_value * x_value)
@@ -67,7 +67,7 @@ def quaternion_to_euler(quaternion):
     # Yaw (z-axis rotation)
     sin_yaw_cos_pitch = 2.0 * (w_value * z_value + x_value * y_value)
     cos_yaw_cos_pitch = 1.0 - 2.0 * (y_value * y_value + z_value * z_value)
-    yaw_angle = np.arctan2(sin_yaw_cos_pitch, cos_yaw_cos_pitch)
+    yaw_angle = np.atan2(sin_yaw_cos_pitch, cos_yaw_cos_pitch)
 
     return roll_angle, pitch_angle, yaw_angle
 
@@ -136,8 +136,8 @@ class Task5c(Node):
         self.ferti_align_joint_state = None
 
         self.max_tol = np.deg2rad(2)
-        self.base_kp = 2.0
-        self.base_max_speed = 2.5
+        self.base_kp = 3.0
+        self.base_max_speed = 1.2
 
         # phases config
         self.safe_lift_angle = None
@@ -628,173 +628,88 @@ class Task5c(Node):
                 self.initial_arm_pos = self.joint_pos.copy()
 
                 self.initial_cartesian_pos = self.current_tcp_pos.copy()
-                self.initial_cartesian_orient = self.current_tcp_orient.copy()
+                if self.current_tcp_orient is not None:
+                    self.initial_cartesian_orient = self.current_tcp_orient.copy()
+                else:
+                    self.initial_cartesian_orient = np.array([0,0,0,1])
 
                 self.get_logger().info(f"✓ Stored Initial Pose: {self.initial_cartesian_pos}")
 
-            if self.ferti_pose is None:
-                self.ferti_pose = self.lookup_tf(self.base_link_name, self.fertilizerTFname)
+            # if self.ferti_pose is None:
+            #     self.ferti_pose = self.lookup_tf(self.base_link_name, self.fertilizerTFname)
 
-            if self.ferti_pose is None:
-                self.get_logger().info("Waiting for fertilizer TF...", throttle_duration_sec=2.0)
-                return
+            # if self.ferti_pose is None:
+            #     self.get_logger().info("Waiting for fertilizer TF...", throttle_duration_sec=2.0)
+            #     return
 
-            if not self.badFruitTable:
-                fruit_records = self.scan_for_bad_fruit_frames()
-                if fruit_records:
-                    self.badFruitTable = fruit_records
-                    self.get_logger().info(f"✓ Found all {len(fruit_records)} bad fruits")
-                else:
-                    self.get_logger().info("Scanning for bad fruits...", throttle_duration_sec=2.0)
-                    return
-            self.get_logger().info("✓ All TFs acquired. Starting Phase 2.")
-            self.phase = 'PHASE_SAFE_LIFT_SHOULDER'
-# ----------------------------------------------------------------------------------------------------------------------------
-
- # ---------------------------------------------------------------------------------------------------------------------------------
-
-# real world this phase not need
-#  -------------------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'PHASE_SAFE_LIFT_SHOULDER':
-            # 1. Calculate the target ONLY ONCE
-            if self.safe_lift_angle is None:
-                # Example: Lift shoulder up by 0.2 radians
-                current_val = self.joint_pos[self.joint2_name]
-                self.safe_lift_angle = current_val - 0.2
-                self.get_logger().info(f"Lifting Shoulder... Target: {self.safe_lift_angle:.2f}")
-# -------------------------------------------------------------------------------------------------------------------------------------------------
-            # 2. Call the helper function (Index 1 is shoulder_lift_joint)
-            if self.move_joint_to_angle(self.safe_lift_angle, self.joint2_name, 1):
-                self.get_logger().info("✓ Safe Lift Complete. Starting Phase 2.")
-                self.phase = 'PHASE_3_ALIGN_TO_FERTI'
-
-        elif self.phase == 'PHASE_3_ALIGN_TO_FERTI':
-            # 1. Align Shoulder to Fertilizer
-            if self.align_joint_to_pose(self.ferti_pose, 'shoulder', self.joint1, 0):
-                self.get_logger().info("✓ Aligned shoulder to fertilizer. Transitioning to PRE_APPROACH.")
-                self.phase = 'PHASE_4_PRE_APPROACH'
-
-        # --- UPDATED PHASES FOR APPROACH ---
-        elif self.phase == 'PHASE_4_PRE_APPROACH':
-            # 1. Create a temp target with +0.10 offset in Y
-            target_pre = self.ferti_pose.copy()
-            target_pre[1] += 0.10
-
-            # 2. Move there (Normal speed / slow=False)
-            reached = self.move_to_tcp_target(target_pre, tol=0.04, slow=False)
-            if reached:
-                self.get_logger().info("✓ Reached +0.10 offset. Starting slow final approach.")
-                self.phase = 'CHECK_ORIENATION'
-# ------------------------------------------------------------------------------------------------------------------------------------
-# i added this phase  to aling with ferti
-        elif self.phase == 'WRIST_ALING_TO_FERTI':
-            target_ferti = self.ferti_pose.copy()
-            if self.align_joint_to_pose(target_ferti, "Fertilizer", 'wrist_3_joint', 5):
-                self.get_logger().info("Wrist aligned to Fertilizer. Proceeding to Final Approach.")
-                self.phase = 'CHECK_ORIENATION'
-# ---------------------------------------------------------------------------------------------------------------
+            # if not self.badFruitTable:
+            #     fruit_records = self.scan_for_bad_fruit_frames()
+            #     if fruit_records:
+            #         self.badFruitTable = fruit_records
+            #         self.get_logger().info(f"✓ Found all {len(fruit_records)} bad fruits")
+            #     else:
+            #         self.get_logger().info("Scanning for bad fruits...", throttle_duration_sec=2.0)
+            #         return
+            # self.get_logger().info("✓ All TFs acquired. Starting Phase 2.")
+            self.phase = 'CHECK_ORIENATION'
+# ------------------------------------------------------------------------------------------------
 
         elif self.phase == 'CHECK_ORIENATION':
             self.get_logger().info("Checking pickup orientation...", throttle_duration_sec=2.0)
 
-            self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose}")
-            if self.orient_to_target(self.pickupOrientationQuaternion, tol=0.01):
+            if self.orient_to_target(self.pickupOrientationQuaternion, tol=0.03):
                 self.get_logger().info("✓ Orientation Correct. Moving to Target.")
-                self.phase = 'PHASE_4_FINAL_APPROACH'
-# ------------------------------------------------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'PHASE_4_FINAL_APPROACH':
-            # self.get_logger().info(f"Force met ({self.current_force_z:.2f}). Attaching Gripper...")
-            # 1. Move to actual fertilizer pose (slow=True)
-            reached = self.move_to_tcp_target(self.ferti_pose, tol=0.01, slow=True)
-            self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose}")
-# ================================================================================================================================================================
-# this line can me used when there is is collision happend
-            # if reached or self.current_force_z > 30.0:
-            if reached:
-                self.get_logger().info("✓ Reached fertilizer hover position. Waiting before attach...")
-                self.publish_twist([0.0, 0.0, 0.0], 0.0) # Stop twist
-                self.phase = 'ATTACH_FERTI_PRE_WAIT'
-        # -----------------------------------
+                self.phase = 'DONE'
+# --------------------------------------------------------------------------------------------------
 
-        # --- NEW ATTACH SEQUENCE WITH FORCE CHECK ---
         elif self.phase == 'ATTACH_FERTI_PRE_WAIT':
-            self.get_logger().info("Waiting 3s before attaching...", throttle_duration_sec=1.0)
-            if self.wait_for_timer(3.0):
-                self.phase = 'ATTACH_FERTI_ACTION'
+                    # ==========================================
+                    # CONFIGURATION: Choose your joint and value here
+                    # ==========================================
+                    target_joint_name = 'wrist_2_joint'  # The joint to move
+                    target_joint_index = 4                   # 0=Pan, 1=Lift, 2=Elbow, 3=W1, 4=W2, 5=W3
+                    delta_value = -0.5                       # Radians to move (positive or negative)
+                    # ==========================================
 
-        elif self.phase == 'ATTACH_FERTI_ACTION':
-            # 1. Safety check
-            if self.current_force_z is None:
-                self.get_logger().warn("Waiting for force sensor data...")
-                return
+                    if not self.phase_initialized:
+                        if target_joint_name not in self.joint_pos:
+                            self.get_logger().warn(f"Waiting for {target_joint_name} data...", throttle_duration_sec=2.0)
+                            return
 
-            # 2. Check Force Condition
-            if self.current_force_z > 30.0:
-                # self.get_logger().info(f"Force met ({self.current_force_z:.2f}). Attaching Gripper...")
-                self.set_gripper_state('attach')
-                self.phase = 'ATTACH_FERTI_POST_WAIT'
-            # else:
-                # self.get_logger().info(f"Force too low ({self.current_force_z:.2f}). Waiting for contact...", throttle_duration_sec=1.0)
+                        current_angle = self.joint_pos[target_joint_name]
+                        self.target_adjust_angle = current_angle + delta_value
 
-        elif self.phase == 'ATTACH_FERTI_POST_WAIT':
-            self.get_logger().info("Waiting 3s after attaching...", throttle_duration_sec=1.0)
-            if self.wait_for_timer(3.0):
-                 self.phase = 'PHASE_5_LIFT_FERTILIZER'
-        # ---------------------------
+                        self.phase_initialized = True
+                        self.get_logger().info(f"Adjusting {target_joint_name} by {delta_value}. Target: {self.target_adjust_angle:.3f}")
 
-        elif self.phase == 'PHASE_5_LIFT_FERTILIZER':
-            # 1. Lift Fertilizer
-            target = self.ferti_pose.copy()
-            target[2] += 0.07
-            reached = self.move_to_tcp_target(target, tol=0.01, slow=True)
+                    current_val = self.joint_pos[target_joint_name]
+                    err = self.target_adjust_angle - current_val
 
-            if reached:
-                self.get_logger().info("✓ Lifted fertilizer. Transitioning to PHASE_6_Wrist_1_Up.")
-                self.phase = 'PHASE_6_REVERSE_FERTILZER'
+                    if abs(err) < self.max_tol:
+                        self.stop_joint()
 
-        elif self.phase == 'PHASE_6_REVERSE_FERTILZER':
-            # 1. Reverse Fertilizer
-            target = self.ferti_pose.copy()
-            target[1] += 0.25
-            reached = self.move_to_tcp_target(target, tol=0.05, slow=True)
+                        self.get_logger().info("✓ Adjustment Reached. Logging Current Pose:")
+                        self.get_logger().info(f"   >> Position (XYZ): {self.current_tcp_pos}")
+                        self.get_logger().info(f"   >> Quaternion (XYZW): {self.current_tcp_orient}")
 
-            if reached:
-                self.get_logger().info("✓ Reversed fertilizer. Transitioning to PHASE_7_Wrist_1_Up.")
-                self.phase = 'PHASE_ALIGN_TO_BIN'
+                        self.phase_initialized = False
+                        self.phase = 'DONE'
+                        return
 
-        elif self.phase == 'PHASE_ALIGN_TO_BIN':
-            if self.align_joint_to_pose(self.dustbinPosition, "Dustbin", self.joint1, 0):
-                self.get_logger().info("Base aligned to Dustbin. Reaching Bin.")
-                self.dustbin_hover_pose = self.current_tcp_pos.copy()
-                self.phase = 'GRIPPER_ORIENTATION_DOWN_FOR_FERTI'
+                    speed = max(min(self.base_kp * err, self.base_max_speed), -self.base_max_speed)
 
-        elif self.phase == 'GRIPPER_ORIENTATION_DOWN_FOR_FERTI':
-            self.wrist_orientation('down', 'PHASE_REACH_BIN', angle=-1.0)
+                    # CHANGED: JointJog
+                    cmd = [0.0] * 6
+                    cmd[target_joint_index] = float(speed)
 
-        elif self.phase == 'PHASE_REACH_BIN':
-            # 1. Move Linear TCP to the specific Dustbin XYZ
-            if self.move_to_tcp_target(self.dustbinPosition, self.approach_tol):
-                self.get_logger().info("Reached Dustbin. Stopping and Waiting to Detach.")
-                self.publish_twist([0.0, 0.0, 0.0], 0.0) # Stop
-                self.phase = 'DETACH_FERTILIZER'
-
-        elif self.phase == 'DETACH_FERTILIZER':
-            self.get_logger().info("Waiting 3s before detaching...", throttle_duration_sec=1.0)
-            if self.wait_for_timer(3.0):
-                # REMOVED: Object Name
-                self.set_gripper_state('detach')
-                self.phase = 'TASK_COMPLETE'
-        # ---------------------------
-
-        elif self.phase == 'TASK_COMPLETE':
-            self.get_logger().info("All tasks completed successfully. Shutting down.", throttle_duration_sec=2.0)
-            self.stop_joint()
+                    msg = JointJog()
+                    msg.joint_names = self.joint_names_list
+                    msg.velocities = cmd
+                    self.joint_pub.publish(msg)
 # -------------------------------------------------------------------------------------------------------------------
 
         elif self.phase == 'DONE':
-            self.get_logger().info(f"all task done bro look at the tcp pose ")
-            self.get_logger().info(f"   >> Position (XYZ): {self.current_tcp_orient}")
-            self.get_logger().info(f"   >> Quaternion (XYZW): {self.joint_pos}")
+            self.get_logger().info("all task done bro look at the tcp pose")
             pass
 # -----------------------------------------------------------------------------------------------------------------------------------------------
 
