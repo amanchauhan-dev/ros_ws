@@ -260,7 +260,7 @@ class Task5c(Node):
 
     def stop_all(self):
         self.stop_joint()
-        self.publish_twist([0.0, 0.0, 0.0], 0.0)
+        self.publish_twist([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
         
 # =============================DELTA_TWIST_CMD================================
 

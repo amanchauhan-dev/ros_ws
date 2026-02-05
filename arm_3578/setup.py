@@ -24,7 +24,6 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            "pv1 = arm_3578.precption.preception_new_v1:main",
             "cm = arm_3578.precption.common:main",
             "pv2 = arm_3578.precption.fruit_broadcaster:main",
             "tmr = arm_3578.task5_ferti_m_real:main",
