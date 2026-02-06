@@ -27,6 +27,7 @@ setup(
             "nav = ebot_3578.nav:main",
             "shape = ebot_3578.shape:main",
             "shape_v1 = ebot_3578.shape_v1:main",
+            "shape_v2 = ebot_3578.shape_v2:main",
             "shape_viz = ebot_3578.shape_viz:main",
             "test = ebot_3578.test:main",
         ],
