@@ -460,7 +460,7 @@ class SideWallPreview(Node):
 
         # plt.ion()
         # self.fig, self.ax = plt.subplots()
-        # self.create_timer(0.1, self.plot_loop)
+        self.create_timer(0.1, self.plot_loop)
 
 
     # ------------------------------------------------
