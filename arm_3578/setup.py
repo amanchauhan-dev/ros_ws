@@ -37,6 +37,11 @@ setup(
             "fsrs = arm_3578.ferti.ferti_simple_real_slow:main",
             # fruits
             "frsrs = arm_3578.fruits.fruits_simple_real_slow:main",
+
+            # 11 feb 2026
+            "rc1 = arm_3578.real_cases.real_case1:main",
+            "rc2 = arm_3578.real_cases.real_case2:main",
+            "rc3 = arm_3578.real_cases.real_case3:main",
         ],
     },
 )
