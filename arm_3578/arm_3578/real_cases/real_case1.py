@@ -642,7 +642,7 @@ class Task5c(Node):
                     self.get_logger().info("Scanning for bad fruits...", throttle_duration_sec=2.0)
                     return
             self.get_logger().info("✓ All TFs acquired. Starting Phase 2.")
-            self.phase = 'PHASE_SAFE_LIFT_SHOULDER'
+            self.phase = 'PHASE_ALIGN_TO_FERTI'
 # -----------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'PHASE_SAFE_LIFT_SHOULDER':
             if self.safe_lift_angle is None:
@@ -699,19 +699,19 @@ class Task5c(Node):
 
             if self.move_joint_group(targets, speed_scale):
                 self.get_logger().info(f" orentaion wala hai   {self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose}")
-                self.phase = 'PHASE_5CM_AWAY_APPROACH'
+                self.phase = 'PHASE_FINAL_APPROACH_WAIT'
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-        elif self.phase == 'PHASE_5CM_AWAY_APPROACH':
-            target_pre = self.ferti_pose.copy()
-            target_pre[1] += 0.05
+        # elif self.phase == 'PHASE_5CM_AWAY_APPROACH':
+        #     target_pre = self.ferti_pose.copy()
+        #     target_pre[1] += 0.05
 
-            reached = self.move_to_tcp_target(target_pre, tol=0.001, slow=True)
+        #     reached = self.move_to_tcp_target(target_pre, tol=0.01, slow=True)
 
-            if reached:
-                self.get_logger().info(" Reached 5cm offset. now ckeck orenation first .")
-                self.phase = 'PHASE_FINAL_APPROACH_WAIT'
+        #     if reached:
+        #         self.get_logger().info(" Reached 5cm offset. now ckeck orenation first .")
+        #         self.phase = 'PHASE_FINAL_APPROACH_WAIT'
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'PHASE_FINAL_APPROACH_WAIT':
@@ -727,13 +727,13 @@ class Task5c(Node):
             self.get_logger().info(f"current magnet force  ({self.current_force_z:.2f} )")
 
             final_ferti_target = self.ferti_pose.copy()
-            final_ferti_target[0] += 0.05
-            final_ferti_target[1] -= 0.015
+            final_ferti_target[0] += 0.055
+            final_ferti_target[1] -= 0.02
             final_ferti_target[2] -=0.001
 
             reached = self.move_to_tcp_target(final_ferti_target, tol=0.001, slow=True)
 
-            if reached or (self.current_force_z > 12.0):
+            if reached or (self.current_force_z > 30.0):
                 self.stop_all()
                 self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose}")
                 self.get_logger().info("Reached fertilizer hover position. Waiting before attach...")
@@ -886,7 +886,7 @@ class Task5c(Node):
 # -------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'FINAL_APPROACH_EBOT_WAIT':
             if self.wait_for_timer(2.0):
-                self.phase = 'FINAL_APPROACH_EBOT'
+                self.phase = 'DROP_FERTI_ON_EBOT'
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -901,7 +901,7 @@ class Task5c(Node):
 
 
             reached = self.move_to_tcp_target(self.target , 0.01)
-            if reached or (abs(self.current_force_z -self.current_force) > 1):
+            if reached or (abs(self.current_force_z -self.current_force) > 5):
                 self.stop_all()
                 self.phase_initialized = False
                 self.get_logger().info("eBot is  Descending  now going to drop")
@@ -977,7 +977,7 @@ class Task5c(Node):
                 self.current_fruits_pose = fruit_record['pos'].copy()
 
                 self.hover_target = self.current_fruits_pose.copy()
-                self.hover_target[2] += 0.10
+                self.hover_target[2] += 0.15
                 self.phase_initialized = True
 
             reached = self.move_to_tcp_target(self.hover_target,tol=0.01)
@@ -989,7 +989,7 @@ class Task5c(Node):
                 self.phase = 'FRUIST_HOVER_WAIT'
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'FRUIST_HOVER_WAIT':
-            if self.wait_for_timer(2.0):
+            if self.wait_for_timer(1.0):
                 self.set_gripper_state('attach')
                 self.get_logger().info("magnet start here so get attach the cane ")
                 self.phase = 'CURRECT_FRUITS_POSE_FINAL_APPROACH'
@@ -1002,12 +1002,13 @@ class Task5c(Node):
                 self.final_target = self.current_fruits_pose.copy()
                 self.final_target[0]  -=0.04
                 self.final_target[1] -= 0.01
+                self.final_target[2] -= 0.001
                 self.phase_initialized = True
 
 
             reached = self.move_to_tcp_target(self.final_target,tol=0.02,slow=True)
 
-            if reached or (self.current_force_z > 35.0):
+            if reached or (self.current_force_z > 50.0):
                 self.stop_all()
                 self.phase_initialized = False
                 self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , fruits {self.final_target}, fruits {self.current_fruits_pose}   jointState {self.joint_pos}")
@@ -1025,11 +1026,12 @@ class Task5c(Node):
                 self.phase = 'LIFT_FRUIRTS_ATTACH'
 
 
-# -----------------------------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------PHASE_ALIGN_TO_FERTI
+
         elif self.phase == 'LIFT_FRUIRTS_ATTACH':
             if not self.phase_initialized:
                  self.lift_target = self.current_tcp_pos.copy()
-                 self.lift_target[2] += 0.10
+                 self.lift_target[2] += 0.15
                  self.phase_initialized = True
                  self.get_logger().info(f"Lifting to: {self.lift_target}")
 
@@ -1052,7 +1054,7 @@ class Task5c(Node):
             if not self.phase_initialized:
                  self.lift_target = self.current_tcp_pos.copy()
                  self.lift_target[1] -= 0.05
-                 self.lift_target[2] += 0.05
+                 self.lift_target[2] += 0.10
 
 
                  self.phase_initialized = True
@@ -1073,7 +1075,7 @@ class Task5c(Node):
             # shoulder_pan_joint is index 0
             if not self.phase_initialized :
                 start_angle = self.joint_pos['shoulder_pan_joint']
-                self.target_angle = self.norm(start_angle + np.radians(75))
+                self.target_angle = self.norm(start_angle + np.radians(50))
                 self.phase_initialized = True
 
             # 2. Use move_joint_to_angle instead of align_joint_to_pose
@@ -1100,7 +1102,7 @@ class Task5c(Node):
             # self.current_fruit_index += 1
             if not self.phase_initialized :
                 self.target_dustbin = self.current_tcp_pos.copy()
-                self.target_dustbin[0] -= 0.10
+                self.target_dustbin[0] -= 0.25
                 self.phase_initialized = True
 
                 dist_x = self.dustbinPosition[0] - self.current_tcp_pos[0]

@@ -948,7 +948,7 @@ class Task5c(Node):
             self.current_fruits_pose = original_fruit_pose.copy()
 
             hover_target = original_fruit_pose.copy()
-            hover_target[2] += 0.10
+            hover_target[2] += 0.15
 
             reached = self.move_to_tcp_target(hover_target,tol=0.01)
 
@@ -959,7 +959,7 @@ class Task5c(Node):
 
 # ---------------------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'FRUIST_HOVER_WAIT':
-            if self.wait_for_timer(3.0):
+            if self.wait_for_timer(1.0):
                 self.set_gripper_state('attach')
                 self.get_logger().info("magnet start here so get attach the cane ")
                 self.phase = 'CURRECT_FRUITS_POSE_FINAL_APPROACH'
@@ -971,12 +971,12 @@ class Task5c(Node):
 
             final_target = self.current_fruits_pose.copy()
             final_target[0]  -=0.04
-            final_target[1] -= 0.01
+            final_target[1] -= 0.001
             # final_target[2] = -0.005
             self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , fruits {final_target}, fruits {self.current_fruits_pose}   jointState {self.joint_pos}")
             reached = self.move_to_tcp_target(final_target,tol=0.001,slow=True)
 
-            if reached or (self.current_force_z > 30.0):
+            if reached or (self.current_force_z > 50.0):
                 self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , fruits {final_target}, fruits {self.current_fruits_pose}   jointState {self.joint_pos}")
                 self.get_logger().info(" arm on the fruits call attach")
                 self.phase = 'ATTACH_FRUITS_PRE_WAIT'
