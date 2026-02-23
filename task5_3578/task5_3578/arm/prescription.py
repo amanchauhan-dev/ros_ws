@@ -165,6 +165,7 @@ class FruitsAndArucoTF(Node):
         # Map ArUco id -> object type (per task spec)
         self.ARUCO_OBJECT_MAP = {
             3: 'fertilizer_1',
+             6: 'ebot_marker',
         }
 
         # TF infrastructure
@@ -337,17 +338,17 @@ class FruitsAndArucoTF(Node):
             green_mask = cv2.inRange(hsv, (35, 40, 40), (90, 255, 255))
             green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=3)
             green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=3)
-            
+
             cv2.imshow('task3a1', green_mask)
             cv2.waitKey(1)
-        
+
             contours, _ = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
+
             bad_fruits = []
             seq_id = 1
-            
+
             MIN_AREA = 800
-            MAX_AREA = 3000 
+            MAX_AREA = 3000
 
             for cnt in contours:
                 area = cv2.contourArea(cnt)
@@ -365,43 +366,43 @@ class FruitsAndArucoTF(Node):
                 if corner > 4 and circularity > 0.6:
                     (cx, cy), r = cv2.minEnclosingCircle(cnt)
                     cx, cy, r = int(cx), int(cy), int(r)
-                    
-                    
+
+
                     # Start must be smaller than End
-                    x_start = int(cx - r) 
+                    x_start = int(cx - r)
                     x_end = int(cx + r)
-                    
+
                     y_start = int(cy)
                     y_end = int(cy + 1.5 * r)
-                    
+
                     # Boundary checks
                     x_start = max(0, x_start)
                     y_start = max(0, y_start)
                     x_end = min(w, x_end)
                     y_end = min(h, y_end)
-        
+
                     # Check valid dimensions before slicing
                     if x_end - x_start > 0 and y_end - y_start > 0:
                         roi = rgb_image[y_start:y_end, x_start:x_end]
-                        
-                        
+
+
                         if roi.size == 0:
-                            continue  
-                        
+                            continue
+
                         hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
                         # Check for Grey spots (Bad Fruit)
                         lower_gray = np.array([0, 0, 50])
                         upper_gray = np.array([180, 50, 200]) # Tweaked saturation slightly
-                        
+
                         # Count how many pixels are grey
                         grey_pixels = cv2.countNonZero(cv2.inRange(hsv_roi, lower_gray, upper_gray))
 
                         total_pixel_roi = roi.shape[0]*roi.shape[1]
                         grey_ration = grey_pixels/total_pixel_roi
 
-                        
-                        if grey_ration > 0.2: 
+
+                        if grey_ration > 0.2:
                             x, y, w_box, h_box = cv2.boundingRect(cnt)
                             bad_fruits.append({
                                 'id': seq_id,
@@ -411,7 +412,7 @@ class FruitsAndArucoTF(Node):
                             # self.get_logger().info(f"sed_id,grey{seq_id,grey_pixels,total_pixel_roi}")
                             seq_id += 1
 
-            
+
             return bad_fruits
     # ------------------------------------------------------------------ #
     # TF helpers

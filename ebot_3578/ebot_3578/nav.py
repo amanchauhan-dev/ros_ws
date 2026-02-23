@@ -22,15 +22,35 @@ TO_SOP = "/to_stop"
 
 CONTROL_DT = 0.1
 
+# LINES = [
+#     ((0.0, 0.0),    (0.0, -1.76)),       # 0
+#     ((0.0, -1.76),   (4.722, -1.76)),     # 1
+#     ((4.722, -1.76), (4.722, 0.0)),      # 2
+#     ((4.722, 0.0),  (0.0, 0.0)),        # 3
+#     ((0.0, 0.0),    (0.0, 1.72)),        # 4
+#     ((0.0, 1.72),    (4.722, 1.72)),      # 5
+#     ((4.722, 1.72),  (4.722, 0.0)),      # 6
+#     ((4.722, 0.0),  (0.0, 0.0)),        # 7
+# ]
+
+# LINES = [
+#     ((0.0, 0.0),    (0.0, -1.76)),       # 0
+#     ((0.0, -1.76),   (4.722, -1.76)),     # 1
+#     ((4.722, -1.76), (4.722, 0.0)),      # 2
+#     ((4.722, 0.0),  (0.0, 0.0)),        # 3
+#     ((0.0, 0.0),    (0.0, 1.72)),        # 4
+#     ((0.0, 1.72),    (4.722, 1.72)),      # 5
+#     ((4.722, 1.72),  (4.722, -1.76)),      # 6
+#     ((4.722, -1.76),  (0.0, -1.76)),        # 7
+#     ((0.0, -1.76),  (0.0, 0.0)),        # 7
+# ]
+
+
 LINES = [
-    ((0.0, 0.0),    (0.0, -1.72)),       # 0
-    ((0.0, -1.72),   (4.722, -1.72)),     # 1
-    ((4.722, -1.72), (4.722, 0.0)),      # 2
-    ((4.722, 0.0),  (0.0, 0.0)),        # 3
-    ((0.0, 0.0),    (0.0, 1.72)),        # 4
-    ((0.0, 1.72),    (4.722, 1.72)),      # 5
-    ((4.722, 1.72),  (4.722, 0.0)),      # 6
-    ((4.722, 0.0),  (0.0, 0.0)),        # 7
+    ((0.0, 0.0),    (0.0, -1.80)),       # 0
+    ((0.0, -1.80),   (4.722, -1.80)),     # 1
+    ((4.722, -1.80),  (0.0, -1.80)),        # 7
+    ((0.0, -1.80),  (0.0, 0.0)),        # 7
 ]
 
 START_LINE_INDEX = 0
@@ -79,16 +99,16 @@ def distance_to_line_segment(px, py, x1, y1, x2, y2):
     """Calculate perpendicular distance from point to line segment"""
     vx, vy = x2 - x1, y2 - y1
     L2 = vx*vx + vy*vy
-    
+
     if L2 == 0:
         return distance_to_point(px, py, x1, y1)
-    
+
     wx, wy = px - x1, py - y1
     t = clamp((wx*vx + wy*vy) / L2, 0.0, 1.0)
-    
+
     qx = x1 + t * vx
     qy = y1 + t * vy
-    
+
     return distance_to_point(px, py, qx, qy)
 
 
@@ -213,14 +233,14 @@ class LineFollower(Node):
         if self.state == self.FOLLOW_LINE:
             sx, sy = self.line_start
             ex, ey = self.line_end
-            
+
             # Check if we're on the last line
             is_last_line = (self.line_idx == self.total_lines - 1)
-            
+
             # If last line, check distance to endpoint
             if is_last_line:
                 dist_to_end = distance_to_point(self.x, self.y, ex, ey)
-                
+
                 if dist_to_end < POS_TOL:
                     self.get_logger().info(
                         f"[DONE] Reached end of last line at ({ex:.2f}, {ey:.2f})"
@@ -236,22 +256,22 @@ class LineFollower(Node):
                     dist_to_next_line = distance_to_line_segment(
                         self.x, self.y, nx1, ny1, nx2, ny2
                     )
-                    
+
                     if dist_to_next_line < LINE_TRANSITION_TOL:
                         self.get_logger().info(
                             f"[TRANSITION] Reached next line. STOPPING to transition from line "
                             f"{self.line_idx} to {next_line_idx}"
                         )
-                        
+
                         # STOP the robot first
                         self.cmd_pub.publish(Twist())
-                        
+
                         # Update to next line
                         self.line_idx = next_line_idx
                         self.line_start = (nx1, ny1)
                         self.line_end = (nx2, ny2)
                         self.target_point = self.line_start
-                        
+
                         # Go to MOVE_TO_START to reposition if needed
                         self.state = self.MOVE_TO_START
                         return
@@ -259,7 +279,7 @@ class LineFollower(Node):
             # Line following control
             vx, vy = ex - sx, ey - sy
             L2 = vx*vx + vy*vy
-            
+
             if L2 == 0:
                 self.get_logger().warn(f"Line {self.line_idx} has zero length!")
                 return

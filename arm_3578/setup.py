@@ -42,6 +42,8 @@ setup(
             "rc1 = arm_3578.real_cases.real_case1:main",
             "rc2 = arm_3578.real_cases.real_case2:main",
             "rc3 = arm_3578.real_cases.real_case3:main",
+            "rc5 = arm_3578.real_cases.real_case5:main",
+            "rfc = arm_3578.real_cases.fruits_real:main"
         ],
     },
 )

@@ -24,7 +24,7 @@ from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool, String
 
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 # ============================================================
 # ===================== CONSTANTS ============================
 # ============================================================
@@ -410,6 +410,16 @@ class SideWallPreview(Node):
         self.stop_pub = self.create_publisher(Bool, "/to_stop", 10)
         self.detection_pub = self.create_publisher(String, "/detection_status", 10)
 
+
+        # /* It create publisher and subscriber for the stopping at dock station */
+
+        # arm will publish true when done
+        self.create_subscription(Bool, "/fertilizer_placement_status",self.fertilizer_placement_status_callback, 10)
+        # it will publish true when reached at dock
+        self.at_dock_pub = self.create_publisher(Bool, "/ebot_dock_status", 10)
+        #at_dock variable will carry current status of the ebot for dock station
+        self.at_dock = False
+
         self.stop_active = False
         self.stop_end_time = None
 
@@ -458,9 +468,14 @@ class SideWallPreview(Node):
         }
         self.status_published = False
 
-        plt.ion()
-        self.fig, self.ax = plt.subplots()
+        # plt.ion()
+        # self.fig, self.ax = plt.subplots()
         self.create_timer(0.1, self.plot_loop)
+
+    # /* when fertilizer will loaded to the ebot then arm will publish true and this function will be called... */
+    def fertilizer_placement_status_callback(self, msg:Bool):
+        if msg.data == True:
+            self.at_dock = False
 
 
     # ------------------------------------------------
@@ -633,6 +648,7 @@ class SideWallPreview(Node):
         # decide label
         if self.last_id == 0:
             label = "DOCK_STATION"
+            self.at_dock = True
         elif self.last_shape == 0:
             label = "FERTILIZER_REQUIRED"
         else:
@@ -654,7 +670,18 @@ class SideWallPreview(Node):
     def plot_loop(self):
 
         # self.visualize()
+
+        # /* It checks if at_dock is true means it is dock station so don't run stop release logic */
+
+        if self.at_dock:
+            self.at_dock_pub.publish(Bool(data=True))
+            return
+        else:
+            self.at_dock_pub.publish(Bool(data=False))
+
+
         # ---------- STOP release logic ----------
+
         if self.stop_active:
             now_ns = self.get_clock().now().nanoseconds
             # publish
@@ -832,7 +859,7 @@ class SideWallPreview(Node):
         self.ax.grid(True)
         self.ax.legend(loc="best")
 
-        plt.pause(0.001)
+        # plt.pause(0.001)
 
 # ============================================================
 

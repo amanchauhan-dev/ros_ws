@@ -7,7 +7,7 @@ import numpy as np
 import time
 # CHANGED: Interface Imports
 from geometry_msgs.msg import TwistStamped
-from std_msgs.msg import Float64MultiArray, Float32
+from std_msgs.msg import Float64MultiArray, Float32, Bool
 from control_msgs.msg import JointJog
 from std_srvs.srv import SetBool
 from sensor_msgs.msg import JointState
@@ -31,7 +31,7 @@ def normalize_quaternion(quaternion):
     magnitude = np.linalg.norm(quaternion_array)
     if magnitude > 0.0:
         return quaternion_array / magnitude
-    else: 
+    else:
         return quaternion_array
 
 def conjugate_quaternion(quaternion):
@@ -77,19 +77,19 @@ class Task5c(Node):
         super().__init__('Task5c')
 
         self.service_callback_group = ReentrantCallbackGroup()
-        
+
         # ===================publishers========================
         # CHANGED: TwistStamped
         self.twist_pub = self.create_publisher(TwistStamped, '/delta_twist_cmds', 10)
         # CHANGED: JointJog
         self.joint_pub = self.create_publisher(JointJog, '/delta_joint_cmds', 10)
-        
+        self.fertilizer_status_publisher = self.create_publisher(Bool, '/fertilizer_placement_status', 10)
         # DEFINED: Joint Names List
         self.joint_names_list = [
-            'shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint', 
+            'shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint',
             'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint'
         ]
-        
+
         # ===================subscribers========================
         self.joint_sub = self.create_subscription(
             JointState,
@@ -97,34 +97,45 @@ class Task5c(Node):
             self.joint_state_callback,
             10
         )
-        
+
         # CHANGED: Float64MultiArray for TCP
         self.tcp_pose_sub = self.create_subscription(
-            Float64MultiArray, 
-            '/tcp_pose_raw', 
-            self.tcp_pose_callback, 
+            Float64MultiArray,
+            '/tcp_pose_raw',
+            self.tcp_pose_callback,
             10
         )
 
         # ADDED: Force Subscriber
         self.force_sub = self.create_subscription(
-            Float32, 
-            '/net_wrench', 
-            self.force_callback, 
+            Float32,
+            '/net_wrench',
+            self.force_callback,
             10
         )
 
         # 2. CREATE SERVICE CLIENTS FOR GRIPPER
         # CHANGED: SetBool
         self.magnet_client = self.create_client(
-                SetBool, 
-                '/magnet', 
+                SetBool,
+                '/magnet',
                 callback_group=self.service_callback_group
             )
 
+
+        self.ebot_docked = False
+        self.ebot_dock_subscriber = self.create_subscription(
+            Bool,
+            '/ebot_dock_status',
+            self.ebot_status_callback,
+            10,
+            callback_group=self.service_callback_group
+        )
+
+
         self.timer = self.create_timer(
-                        0.02, 
-                        self.main_loop, 
+                        0.02,
+                        self.main_loop,
                         callback_group=self.service_callback_group
                     )
 
@@ -134,64 +145,66 @@ class Task5c(Node):
         self.teamIdentifier = '3578'
         self.base_link_name = 'base_link'
         self.joint_pos = {}
-        
+
         # tcp_pose variables
+        self.safe_lift_angle = None
+
         self.current_tcp_pos = None
-        self.current_tcp_orient = None 
+        self.current_tcp_orient = None
         self.initial_arm_pos = None
         self.ferti_align_joint_state = None
-        
+
         self.max_tol = np.deg2rad(3)
         self.base_kp = 1.0
         self.base_max_speed = 0.5        # Linear Max
-        self.base_max_angular = 1.5   
-        # phases config 
-        
+        self.base_max_angular = 1.5
+        # phases config
+
         self.phase = 'START'
-        
+
         self.ferti_pose = None
         self.fertilizerTFname = f'{self.teamIdentifier}_fertilizer_1'
         self.ebotTransformName = f'{self.teamIdentifier}_ebot_marker'
-        self.pickupOrientationQuaternion = np.array([0.707, 0.028, 0.034, 0.707])
+        self.pickupFertiOrientationQuaternion = np.array([0.707, 0.028, 0.034, 0.707])
         self.dropOrienationQuateration = np.array([-0.684, 0.726, 0.05, 0.008])
         # --------------------------------------------------------------
         self.ebotWorldPosition = None
-        self.ebotWorldPosition = np.array([0.711, 0.006, 0.145])
+        # self.ebotWorldPosition = np.array([0.711, 0.006, 0.145])
         # ------------------------------------------------------------
-        
+
         self.badFruitTable = []
         self.badFruitFrameList = [
             f'{self.teamIdentifier}_bad_fruit_1',
         ]
-        
+
         self.fruitHomePosition = np.array([-0.159, 0.501, 0.415])
-        self.fruitHomeOrientation = normalize_quaternion([0.029, 0.997, 0.045, 0.033])
+
 
 
         # -----------------------------------------------------------------------------------
         self.dustbinPosition = np.array([-0.806, 0.010, 0.182])
-        self.dustbinOrientation = normalize_quaternion([0.0, 0.0, 0.0, 1.0])
+
         # -----------------------------------------------------------------------------------
         self.phase_initialized = False
-        self.current_fruits_pose = None 
+        self.current_fruits_pose = None
         self.wait_start_time = None
         self.wrist1_delta_down = -1.36
         self.current_fruit_index = 0
-        self.current_force_z = 0.0 
+        self.current_force_z = 0.0
         # -----------------------------------------------------------------------------------------
-        
+
 
 
 # ====================callbacks===============================================
     def joint_state_callback(self, msg):
         for n, p in zip(msg.name, msg.position):
-            self.joint_pos[n] = p   
+            self.joint_pos[n] = p
 # --------------------------------------------------------------------------
     def tcp_pose_callback(self, msg):
         # CHANGED: Handle Float64MultiArray [x, y, z, rx, ry, rz]
         if len(msg.data) >= 6:
             self.current_tcp_pos = np.array([msg.data[0], msg.data[1], msg.data[2]])
-            
+
             # Convert Euler to Quaternion for logic
             roll = msg.data[3]
             pitch = msg.data[4]
@@ -200,6 +213,15 @@ class Task5c(Node):
 
     def force_callback(self, msg):
         self.current_force_z = msg.data
+
+
+# -------------------------------------------------------------------------
+    def ebot_status_callback(self, msg):
+
+        if msg.data :
+            if not self.ebot_docked:
+                self.get_logger().info("✓ eBot has reached the dock station!")
+                self.ebot_docked = True
 
 # ==================Attach/Detach=========================================
 
@@ -211,20 +233,17 @@ class Task5c(Node):
         Returns True if command was sent, False if blocked.
         """
         req = SetBool.Request()
-        
+
         if action == 'attach':
             if self.current_force_z is None:
                 self.get_logger().warn("Force sensor data None.")
-                return False 
-
-            if self.current_force_z > 30.0:
-                req.data = True
-                self.get_logger().info(f"Force Good ({self.current_force_z:.2f} > 30). Magnet ON.")
-                self.magnet_client.call_async(req)
-                return True
-            else:
-                self.get_logger().warn(f"Force Low ({self.current_force_z:.2f}). Waiting...")
                 return False
+
+            req.data = True
+            self.get_logger().info(f"Force Good ({self.current_force_z:.2f} > 30). Magnet ON.")
+            self.magnet_client.call_async(req)
+            return True
+
         else:
             req.data = False
             self.get_logger().info("Magnet OFF.")
@@ -244,119 +263,32 @@ class Task5c(Node):
         msg = TwistStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'base_link'
-        
+
         # Linear Velocity (Expects [x, y, z] array)
         msg.twist.linear.x = float(linear_vel[0])
         msg.twist.linear.y = float(linear_vel[1])
         msg.twist.linear.z = float(linear_vel[2])
-        
+
         # Angular Velocity (Expects [rx, ry, rz] array)
         if angular_vel is not None:
             msg.twist.angular.x = float(angular_vel[0])
             msg.twist.angular.y = float(angular_vel[1])
             msg.twist.angular.z = float(angular_vel[2])
-        
+
         self.twist_pub.publish(msg)
 
     def stop_all(self):
         self.stop_joint()
         self.publish_twist([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
-        
+
 # =============================DELTA_TWIST_CMD================================
 
-# -------------------------------------------------------------------------------------------------------
-    def servo_to_goal(self, currentPosition, currentQuaternion, targetPosition, targetQuaternion, 
-                        positionTolerance, angularTolerance, maximumLinearVelocity, maximumAngularVelocity, 
-                        checkOrientation=True):
-            
-            # 1. Calculate Linear Error
-            position_error = targetPosition - currentPosition
-            distance_value = float(np.linalg.norm(position_error))
-            
-            # We define zones based on how far we are
-            
-            if distance_value > 0.30:          # Far (> 10cm)
-                kp = 3.0
-                allowed_speed = maximumLinearVelocity  # Full speed
-            elif distance_value > 0.20:        # Approaching (5-10cm)
-                kp = 2.0
-                allowed_speed = 0.15           # Slow down significantly
-            elif distance_value > 0.05:        # Close (1-5cm)
-                kp = 1.0
-                allowed_speed = 0.05           # Creep speed
-            else:                              # Very Close (< 1cm)
-                kp = 1.0
-                allowed_speed = 0.02   # Super slow precise parking speed
-
-            # 2. Check if we are "Done" (Stop Condition)
-            position_ok = (distance_value <= positionTolerance)
-            
-            # 3. Calculate Linear Velocity Vector
-            final_speed = 0.0
-            if not position_ok:
-                # P-Controller: Speed = Gain * Error
-                calculated_speed = kp * distance_value
-                final_speed = min(calculated_speed, allowed_speed)
-# Ensure we don't drop below 0.05 m/s
-                if final_speed < 0.05:
-                    final_speed = 0.05
-
-                linear_velocity_vector = (position_error / distance_value) * final_speed
-            else:
-                linear_velocity_vector = np.zeros(3)
-
-            orientation_ok = True
-            roll_err, pitch_err, yaw_err = 0.0, 0.0, 0.0
-
-            if checkOrientation:
-
-                q_err = multiply_quaternion(targetQuaternion, conjugate_quaternion(currentQuaternion))
-                
-                # Convert to Euler (Axis/Angle speeds)
-                roll_err, pitch_err, yaw_err = quaternion_to_euler(q_err)
-                
-                # Check if all angles are within tolerance
-                if (abs(roll_err) <= angularTolerance and 
-                    abs(pitch_err) <= angularTolerance and 
-                    abs(yaw_err) <= angularTolerance):
-                    orientation_ok = True
-                    angular_velocity_vector = np.zeros(3)
-                else:
-                    orientation_ok = False
-                    # Simple P-Controller for Rotation
-                    # Note: We can also ramp this, but usually constant is fine for rotation
-                    angular_velocity_vector = np.array([roll_err, pitch_err, yaw_err]) * 2.0 
-                    
-                    mag_ang = np.linalg.norm(angular_velocity_vector)
-                    if mag_ang > maximumAngularVelocity:
-                        angular_velocity_vector = (angular_velocity_vector / mag_ang) * maximumAngularVelocity
-            else:
-                angular_velocity_vector = np.zeros(3)
-                
-            if not position_ok:
-                 self.get_logger().info(
-                                f"DIST: {distance_value:.3f}m | "
-                                f"SPD Cmd: {final_speed:.2f} m/s | "
-                                f"RotErr: {np.degrees(roll_err):.1f}° {np.degrees(pitch_err):.1f}° {np.degrees(yaw_err):.1f}°",
-                                throttle_duration_sec=0.5
-                            )
-
-            # 5. Publish Command
-            self.publish_twist(linear_velocity_vector, angular_velocity_vector)
-
-            # 6. Return Status
-            # We only return True if BOTH Position AND Orientation are good
-            if position_ok and orientation_ok:
-                return True
-            else:
-                return False
-            
 
 # --------------------------------------------------------------------------------------------------------
-# this is simple version of servo to goal   for only to move x,y,z  
+# this is simple version of servo to goal   for only to move x,y,z
     def move_to_tcp_target(self, target, tol=0.01, slow=False):
         """
-        A simplified position-only mover. 
+        A simplified position-only mover.
         Useful as a fallback or for simple XYZ adjustments.
         """
         if self.current_tcp_pos is None:
@@ -370,19 +302,18 @@ class Task5c(Node):
             self.stop_all()
             self.get_logger().info(f"✓ Reached Target (XYZ Only). Final Error: {dist:.4f}m")
             return True
-        
+
         # 3. Determine Speed Zone (The Creep Approach)
         if slow:
             max_s = 0.15
             kp = 1.5
         else:
-            max_s = 0.4  
-            kp = 2.0   
+            max_s = 0.4
+            kp = 2.0
 
         if dist < 0.05:
-            max_s = 0.05 
-            kp = 1.0     
- 
+            max_s = 0.05
+            kp = 1.0
 
         # 4. Calculate Velocity
         desired_speed = kp * dist
@@ -390,112 +321,55 @@ class Task5c(Node):
 
         if speed < 0.05:
             speed = 0.05
-        
+
         direction = err / dist
         linear_vel = direction * speed
-        
+
         # 5. Logging (Throttled)
         self.get_logger().info(
-            f"Fallback Move | Dist: {dist:.3f}m | Speed: {speed:.3f}", 
+            f"Fallback Move | Dist: {dist:.3f}m | Speed: {speed:.3f}",
             throttle_duration_sec=0.5
         )
 
-        # 6. Publish 
+        # 6. Publish
         self.publish_twist(linear_vel, angular_vel=None)
-        
-        return False
-    
 
-# ---------------------------------------------------------------------------------
-# this is alos twist  but chek only orenation only not move only aling 
-    def orient_to_target(self, target_quat, tol=0.03):
-        """
-        Calculates error between current orientation and target quaternion
-        and publishes TwistStamped to correct it.
-        """
-        if self.current_tcp_orient is None:
-            return False
-            
-        # 1. Calculate Error Quaternion
-        q_curr_inv = conjugate_quaternion(self.current_tcp_orient)
-        q_err = multiply_quaternion(target_quat, q_curr_inv)
-        
-        # Ensure we take the shortest path (flips hemisphere if needed)
-        if q_err[3] < 0:
-            q_err = -q_err
-            
-        xyz_err = q_err[:3]
-        error_mag = np.linalg.norm(xyz_err)
-        
-        # 2. Check Success
-        if error_mag < tol:
-            self.stop_all() 
-            self.get_logger().info(f"✓ Orientation Aligned. Error: {error_mag:.4f}")
-            return True
-            
-        # 3. Calculate Speed
-        kp_rot = 2.0  
-        max_rot_speed = 0.5 
-        
-        ang_speed = min(kp_rot * error_mag, max_rot_speed)
-        
-# speed lower control
-        if ang_speed < 0.05:
-            ang_speed = 0.05
-        
-        if error_mag > 0:
-            ang_dir = xyz_err / error_mag
-        else:
-            ang_dir = np.zeros(3)
-        
-        # 4. Debug Logging (Throttled)
-        # Convert error to roughly degrees for easy reading
-        approx_deg_error = np.degrees(error_mag * 2) 
-        self.get_logger().info(
-            f"Orienting... | Err: {approx_deg_error:.1f}° | Speed: {ang_speed:.2f}",
-            throttle_duration_sec=0.5
-        )
-
-        # 5. Publish Command
-        # Linear velocity is ZERO because we only want to rotate
-        angular_vel = ang_dir * ang_speed
-        self.publish_twist([0.0, 0.0, 0.0], angular_vel)
-        
         return False
-    
+
+
 # ============================ JOINT DELTA CMD =====================================================
 
 
 # ----------------------------------------------------------------------------------------
-    def move_joint_to_angle(self, target_angle, joint_name, joint_index, tol=0.02):
+    def move_joint_to_angle(self, target_angle, joint_name, joint_index, tol=0.05):
         """
         Master function to move any single joint to a specific angle.
         Includes Speed Ramping and Debug Logging.
         """
-        if joint_name not in self.joint_pos: 
+        if joint_name not in self.joint_pos:
             return False
-        
+
         current = self.joint_pos[joint_name]
         err = self.norm(target_angle - current)
-        
+
         if abs(err) < tol:
-            self.stop_joint() 
+            self.stop_joint()
             self.get_logger().info(f"✓ Joint {joint_name} Reached. Err: {err:.4f}")
             return True
-            
-        if abs(err) > 1.5:         # Far (> 30 deg)
+
+        if abs(err) > 1.5:
             kp = 2.0
-            max_s = self.base_max_speed # e.g. 1.0 rad/s
-        elif abs(err) > 0.17 or abs(err) > 1.0 :       # Medium
+            max_s = self.base_max_speed
+        elif abs(err) > 0.17 or abs(err) > 1.0 :
             kp = 1.5
             max_s = 0.5
-        else:                      # Close (< 6 deg)
+        else:
             kp = 1.0
-            max_s = 0.1            # Creep speed for joints
+            max_s = 0.1
 
         speed = kp * err
         speed = max(min(speed, max_s), -max_s)
-        
+
         # If speed is too small (but not zero), boost it
         if abs(speed) < 0.05:
             if speed > 0:
@@ -510,17 +384,17 @@ class Task5c(Node):
             throttle_duration_sec=0.5
         )
         # ==========================================================
-        
+
         cmd = [0.0] * 6
         cmd[joint_index] = float(speed)
-        
+
         msg = JointJog()
         msg.joint_names = self.joint_names_list
         msg.velocities = cmd
         self.joint_pub.publish(msg)
-        
+
         return False
-    
+
 # ------------------------------------------------------------------------------------------------------
     def move_joint_group(self, targets, speed_scale):
         """
@@ -542,7 +416,7 @@ class Task5c(Node):
         for joint, target in targets.items():
             if joint not in self.joint_pos:
                 # If we can't see the joint, assume we aren't there yet
-                all_reached = False 
+                all_reached = False
                 continue
 
             idx = joint_map[joint]
@@ -559,7 +433,7 @@ class Task5c(Node):
                 cmd[idx] = 0.0
             else:
                 all_reached = False
-                
+
                 # 2. Speed Ramping (Per Joint)
                 if abs_err > 1.5:          # Far
                     kp = 2.0
@@ -570,13 +444,13 @@ class Task5c(Node):
                 else:                      # Close (Creep)
                     kp = 1.0
                     local_max = 0.1
-                
+
                 # Calculate Base Speed
                 speed = kp * err
-                
+
                 # Apply custom scale (if you want one joint slower than others)
                 speed *= speed_scale.get(joint, 1.0)
-                
+
 
                 # Clip to safe limits
                 speed = max(min(speed, local_max), -local_max)
@@ -587,7 +461,7 @@ class Task5c(Node):
                     else:
                         speed = -0.05
                 # --------------------------------
-                
+
                 cmd[idx] = float(speed)
 
         # 3. Log Status (Throttled)
@@ -602,12 +476,12 @@ class Task5c(Node):
         msg.joint_names = self.joint_names_list
         msg.velocities = cmd
         self.joint_pub.publish(msg)
-        
+
         # 5. Stop if everyone is done
         if all_reached:
             self.stop_all()
             self.get_logger().info("✓ Joint Group Target Reached.")
-            
+
         return all_reached
 
 
@@ -622,14 +496,14 @@ class Task5c(Node):
         x = target_pose[0]
         y = target_pose[1]
         desired_angle = self.norm(np.arctan2(y, x) + np.pi)
-        
+
         # 2. The Movement (Delegate to the master function)
         # We return whatever the master function returns (True if done, False if moving)
         success = self.move_joint_to_angle(desired_angle, joint_name, joint_index)
-        
+
         if success:
             self.get_logger().info(f"✓ Aligned {target_label} (Joint {joint_index})")
-            
+
         return success
 
 # =====================================extra function ====================================
@@ -664,7 +538,7 @@ class Task5c(Node):
         else:
             return None
 
-#------------------------------------------------------------------------------------------- 
+#-------------------------------------------------------------------------------------------
     def wait_for_timer(self, seconds):
         """
         Non-blocking timer. Returns True when 'seconds' have passed.
@@ -682,16 +556,16 @@ class Task5c(Node):
         # 3. Log status while waiting (only every 0.5s to avoid spam)
         if time_diff < seconds:
             self.get_logger().info(
-                f"Waiting... ({time_diff:.1f}/{seconds:.1f}s)", 
+                f"Waiting... ({time_diff:.1f}/{seconds:.1f}s)",
                 throttle_duration_sec=0.5
             )
             return False
-        
+
         # 4. Timer Finished
         self.wait_start_time = None
         self.get_logger().info("Wait Complete.")
         return True
-    
+
 
 # --------------------------------------------------------------------------------------------
     @staticmethod
@@ -701,12 +575,11 @@ class Task5c(Node):
         while a < -np.pi:
             a += 2 * np.pi
         return a
- 
+
 # =============================main loop======================================================================
     def main_loop(self):
-
         if self.phase == 'START':
-            self.get_logger().info("phase machine in the real is start ")
+            self.get_logger().info("phase machine in the gazebo is start ")
             self.phase = 'PHASE_GETTING_TF'
 
         elif self.phase == 'PHASE_GETTING_TF':
@@ -715,15 +588,15 @@ class Task5c(Node):
                 if 'shoulder_pan_joint' not in self.joint_pos:
                     self.get_logger().info("Waiting for joint_states...", throttle_duration_sec=2.0)
                     return
-                if self.current_tcp_pos is None: 
+                if self.current_tcp_pos is None:
                     self.get_logger().info("Waiting for TCP pose...", throttle_duration_sec=2.0)
                     return
 
                 self.initial_arm_pos = self.joint_pos.copy()
-                
+
                 self.initial_cartesian_pos = self.current_tcp_pos.copy()
                 self.initial_cartesian_orient = self.current_tcp_orient.copy()
-                
+
                 self.get_logger().info(f"✓ Stored Initial Pose: {self.initial_cartesian_pos}")
 
             if self.ferti_pose is None:
@@ -731,41 +604,51 @@ class Task5c(Node):
 
             if self.ferti_pose is None:
                 self.get_logger().info("Waiting for fertilizer TF...", throttle_duration_sec=2.0)
-                return 
-            
+                return
+
             if not self.badFruitTable:
                 fruit_records = self.scan_for_bad_fruit_frames()
                 if fruit_records:
                     self.badFruitTable = fruit_records
-                    self.get_logger().info(f"✓ Found all {len(fruit_records)} bad fruits")
+                    self.get_logger().info(f"✓ Found all {len(fruit_records)}    {(fruit_records)} bad fruits")
                 else:
                     self.get_logger().info("Scanning for bad fruits...", throttle_duration_sec=2.0)
                     return
-            self.get_logger().info("✓ All TFs acquired. Starting Phase 2.")    
-            self.phase = 'PHASE_BASE_ALING_TO_TRAY'
-
+            self.get_logger().info("✓ All TFs acquired. Starting Phase 2.")
+            self.phase = 'PHASE_SAFE_LIFT_SHOULDER'
 # -----------------------------------------------------------------------------------------------------------------------
-# -------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------------------
+
+        elif self.phase == 'PHASE_SAFE_LIFT_SHOULDER':
+            if self.safe_lift_angle is None:
+                current_val = self.joint_pos[self.joint_names_list[1]]
+                self.safe_lift_angle = current_val - 0.2
+                self.get_logger().info(f"Lifting Shoulder...  Note only for the gazebo because the elbow get colied with the fruits tray   Target: {self.safe_lift_angle:.2f}")
+            # 2  we are approach the target
+            if self.move_joint_to_angle(self.safe_lift_angle, self.joint_names_list[1], 1):
+                self.get_logger().info(" Safe Lift Complete. we are moving into next phase ")
+                self.phase = 'PHASE_BASE_ALING_TO_TRAY'
+# -----------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'PHASE_BASE_ALING_TO_TRAY':
             target_pose = self.fruitHomePosition.copy()
 
             # 2. Pass that pose to the function
             if self.align_joint_to_pose(target_pose, 'shoulder', self.joint_names_list[0], 0):
                 self.get_logger().info("Base aligned to Fruit Tray. Moving Wrist Down.")
-                self.phase = 'PHASE_GRIPPER_ORIENTATION_DOWN'
+                self.phase = 'PHASE_GRIPPER_ORIENTATION_DOWN_FRUITS'
 # -----------------------------------------------------------------------------------------------------------------
 
-        elif self.phase == 'PHASE_GRIPPER_ORIENTATION_DOWN':
-            
+        elif self.phase == 'PHASE_GRIPPER_ORIENTATION_DOWN_FRUITS':
+
             joint_name = 'wrist_1_joint'
-            joint_idx = 3  
-            
+            joint_idx = 3
+
             if not self.phase_initialized:
                 if joint_name not in self.joint_pos:
-                    return 
-                
+                    return
+
                 self.target_wrist_val = self.joint_pos[joint_name] + self.wrist1_delta_down
-                
+
                 self.phase_initialized = True
                 self.get_logger().info(f"Rotating Wrist Down... Target: {self.target_wrist_val:.2f}")
 
@@ -776,35 +659,27 @@ class Task5c(Node):
                 self.phase = 'FRUITS_HOVER_WAIT'
 
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        
+
         elif self.phase == 'FRUITS_HOVER_WAIT':
             if self.wait_for_timer(3.0):
-                self.phase = 'APPROACH_FRUITS_TRAY'   
+                self.phase = 'APPROACH_FRUITS_TRAY'
 # -------------------------------------------------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'APPROACH_FRUITS_TRAY':   
+
+        elif self.phase == 'APPROACH_FRUITS_TRAY':
             target = self.fruitHomePosition.copy()
-            
+
             if self.move_to_tcp_target(target, tol=0.02):
                 self.get_logger().info("Initial Approach Done. Starting Sorting.")
-                self.phase = 'SETTEL_FRUITS_TRAY'
-# -----------------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'SETTEL_FRUITS_TRAY':
-            if self.wait_for_timer(3.0):
-                self.phase = 'CHECK_ON_FRUIT_TRAY_ORENTATION'   
-# --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'CHECK_ON_FRUIT_TRAY_ORENTATION':
-            self.get_logger().info("Checking pickup orientation...", throttle_duration_sec=2.0)
-            
-            if self.orient_to_target(self.fruitHomeOrientation, tol=self.max_tol):
-                self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose},  jointState {self.joint_pos}")
-                self.get_logger().info(" Orientation Correct. Moving to Target.")
-                self.phase = 'APPROACH_FRUITS'
+                self.phase = 'APPROACH_FRUITS_WAIT'
 
+# -----------------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'APPROACH_FRUITS_WAIT':
+            if self.wait_for_timer(2.0):
+                self.phase = 'APPROACH_FRUITS'
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'APPROACH_FRUITS':
-            self.get_logger().info("we are in approach fruits ")
-            
+
             fruit_record = self.badFruitTable[self.current_fruit_index]
             original_fruit_pose = fruit_record['pos']
 
@@ -816,31 +691,33 @@ class Task5c(Node):
             reached = self.move_to_tcp_target(hover_target,tol=0.01)
 
             if reached:
+                self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.current_fruits_pose},  jointState {self.joint_pos}")
                 self.get_logger().info(" we are at the hover at the fruits   now go  check the orenation  of pickup ")
                 self.phase = 'FRUIST_HOVER_WAIT'
-
-
-
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'FRUIST_HOVER_WAIT':
             if self.wait_for_timer(3.0):
-                self.phase = 'CHECK_ORENATION_FRUITS_PICKUP'  
+                self.set_gripper_state('attach')
+                self.get_logger().info("magnet start here so get attach the cane ")
+                self.phase = 'LIFT_MOVE_TCP'
 
-# ------------------------------------------------------------------------------------------------------------------------------------------------------------ 
-                
-        elif self.phase == 'CHECK_ORENATION_FRUITS_PICKUP':
-            if self.orient_to_target(self.fruitHomeOrientation, tol= self.max_tol):
-                self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose},  jointState {self.joint_pos}")
-                self.get_logger().info(" Orientation Correct.  on fruits  Moving to Target.")
-                self.phase = 'CURRECT_FRUITS_POSE_FINAL_APPROACH'
 # ----------------------------------------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'CURRECT_FRUITS_POSE_FINAL_APPROACH':
-            self.get_logger().info(f"current magnet force  ({self.current_force_z:.2f} )")
-            reached = self.move_to_tcp_target(self.current_fruits_pose,tol=0.02,slow=True)
 
-            if reached:
-                self.get_logger().info(" arm on the fruits call attach  ")
+            self.get_logger().info(f"current magnet force  ({self.current_force_z:.2f} )")
+
+            final_target = self.current_fruits_pose.copy()
+            final_target[0]  -=0.04
+            final_target[1] -= 0.01
+            # final_target[2] = -0.001
+
+            reached = self.move_to_tcp_target(final_target,tol=0.02,slow=True)
+
+            if reached or (self.current_force_z > 35.0):
+                self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , fruits {final_target}, fruits {self.current_fruits_pose}   jointState {self.joint_pos}")
+                self.get_logger().info(" arm on the fruits call attach")
                 self.phase = 'ATTACH_FRUITS_PRE_WAIT'
+
 # -------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'ATTACH_FRUITS_PRE_WAIT':
             if self.wait_for_timer(3.0):
@@ -848,74 +725,198 @@ class Task5c(Node):
 
         elif self.phase == 'ATTACH_FRUITS_ACTION':
                 self.set_gripper_state('attach')
-                self.phase = 'ATTACH_FRUITS_POST_WAIT'
-        
-        elif self.phase == 'ATTACH_FRUITS_POST_WAIT':
-            if self.wait_for_timer(3.0):
-                 self.phase = 'LIFT_FRUIRTS_ATTACH'
+                self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos}    jointState {self.joint_pos}")
+                self.phase = 'LIFT_MOVE_TCP'
 
-# -----------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'LIFT_FRUIRTS_ATTACH':
+
+
+# -lift using move tcp pose -----------------------------------------------------------------------------------------------------
+
+        elif self.phase == 'LIFT_MOVE_TCP':
+            self.get_logger().info(f"current magnet force  ({self.current_force_z:.2f} )")
             if not self.phase_initialized:
-                 self.lift_target = self.current_tcp_pos.copy()
-                 self.lift_target[2] += 0.15
+                 self.lift_target_fruits = self.current_tcp_pos.copy()
+                 self.lift_target_fruits[2] += 0.12
                  self.phase_initialized = True
-                 self.get_logger().info(f"Lifting to: {self.lift_target}")
+                 self.get_logger().info(f"Lifting to: {self.lift_target_fruits}")
 
-            reached = self.move_to_tcp_target(self.lift_target,tol=0.02,slow=True)
-
-            if reached:
+            if self.move_to_tcp_target(self.lift_target_fruits, tol=0.01, slow=True):
+                self.get_logger().info(f" this is when  lift {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
                 self.get_logger().info("Lift Complete.")
                 self.phase_initialized = False
                 self.phase = 'LIFT_FRUITS_WAIT'
+
+
+# -----------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'LIFT_FRUIRTS_ATTACH':
+             if not self.phase_initialized:
+                self.temp = self.joint_pos.copy()
+                self.phase_initialized = True
+
+             targets = {
+
+
+                'elbow_joint': self.temp['elbow_joint'] + 0.5,
+                'wrist_1_joint': self.temp['wrist_1_joint'] - 0.5,
+            }
+
+             speed_scale = {
+
+                'elbow_joint': 0.5,
+                'wrist_1_joint': 0.5,
+
+            }
+
+            #  if this fail the use indivdual joint
+            # self.move_joint_to_angle(self.safe_lift_angle, self.joint_names_list[1], 1):
+
+             reached = self.move_joint_group(targets, speed_scale)
+             if reached :
+                self.get_logger().info(f" lift fruits  wala hai   {self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.current_fruits_pose}")
+                self.get_logger().info("we are lif success fully ")
+                self.temp = None
+                self.phase_initialized = False
+                self.phase = 'LIFT_FRUITS_WAIT'
+
 # ---------------------------------------------------------------------------------------
         elif self.phase == 'LIFT_FRUITS_WAIT':
+            if self.wait_for_timer(3.0):
+                self.set_gripper_state('detach')
+                self.phase = 'RETURN_HOVER_POSE'
+# -----------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'RETURN_HOVER_POSE':
+
+
+            if self.hover_fruits_tray is None:
+                self.get_logger().info("we are missing hover pose");
+                return
+
+
+            targets = {
+
+                'shoulder_pan_joint': self.hover_fruits_tray['shoulder_pan_joint'],
+                'shoulder_lift_joint': self.hover_fruits_tray['shoulder_lift_joint'],
+                'elbow_joint': self.hover_fruits_tray['elbow_joint'],
+                'wrist_1_joint': self.hover_fruits_tray['wrist_1_joint'],
+                'wrist_2_joint': self.hover_fruits_tray['wrist_2_joint'],
+                'wrist_3_joint': self.hover_fruits_tray['wrist_3_joint'],
+            }
+
+
+            speed_scale = {
+                'shoulder_pan_joint': 0.3,
+                'shoulder_lift_joint': 0.7,
+                'elbow_joint': 1.0,
+                'wrist_1_joint': 0.5,
+                'wrist_2_joint': 0.5,
+                'wrist_3_joint': 0.5,
+            }
+
+            #  if this fail the use indivdual joint
+            # self.move_joint_to_angle(self.safe_lift_angle, self.joint_names_list[1], 1):
+
+            reached = self.move_joint_group(targets, speed_scale)
+            if reached :
+                self.get_logger().info(f" home pose  {self.current_tcp_orient} , pose current {self.current_tcp_pos} , fruits {self.current_fruits_pose}")
+                self.get_logger().info("we are lif success fully ")
+                self.temp = None
+                self.current_fruit_index += 1;
+                self.phase_initialized = False
+                self.phase = 'LIFT_NEXT_TEST'
+
+
+
+
+# --------------------------------------------------------------------------------------------------------------------------------------
+        elif self.phase  == 'LIFT_NEXT_TEST':
+            if self.current_fruit_index >= len(self.badFruitTable):
+                self.get_logger().info("All fruits sorted. Stopping.")
+                self.stop_joint()
+                self.phase = 'BASE_ALING_TO_DUSTBIN'
+                return
+            else :
+                self.get_logger().info(f"we are movint for the current fruits {self.current_fruit_index }")
+                self.phase = 'APPROACH_FRUITS_WAIT'
+
+# --------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'BASE_ALING_TO_DUSTBIN':
+            target_pose = self.dustbinPosition.copy()
+
+            # 2. Pass that pose to the function
+            if self.align_joint_to_pose(target_pose, 'shoulder', self.joint_names_list[0], 0,tol = np.degrees(20)):
+                self.get_logger().info("Base aligned  to dustbin.")
+                self.phase = 'MOVED_FOR_DUSTBIN_WAIT'
+
+# --------------------------------------------------------------------------------------------------------
+
+        elif self.phase == 'MOVED_FOR_DUSTBIN_WAIT':
             if self.wait_for_timer(3.0):
                 self.phase = 'MOVED_FOR_DUSTBIN'
 # ----------------------------------------------------------------------------------------------------
         elif self.phase == 'MOVED_FOR_DUSTBIN':
-            
-            reached = self.move_to_tcp_target(self.dustbinPosition,tol= 0.02,slow=True)
+
+            reached = self.move_to_tcp_target(self.dustbinPosition,tol= 0.20,slow=True)
 
             if reached:
                 self.get_logger().info("WE ARE AT DUSTBIN .")
                 self.phase = 'DUSTBIN_WAIT'
-
 # ---------------------------------------------------------------------------------------
         elif self.phase == 'DUSTBIN_WAIT':
-            if self.wait_for_timer(3.0):
+            if self.wait_for_timer(2.0):
                 self.phase = 'ON_DUSTBIN_CHECK'
-# ----------------------------------------------------------------------------------------------------------
+# # ----------------------------------------------------------------------------------------------------------
 
-        elif self.phase == 'ON_DUSTBIN_CHECK':
-            target = self.dustbinPosition.copy()
-            err = np.linalg.norm(target - self.current_tcp_pos)
-            if err < 0.05:
-                self.get_logger().info("we are at the dustbin bro now gp tp check orenataion ")
-                self.phase = 'CHECK_DUSTBIN_ORENATION'
-            else :
-                self.get_logger().info(f"we are  very clove lets try again {err}")
-                self.phase ='MOVED_FOR_DUSTBIN'
-#---------------------------------------------------------------------------------------------------------------- 
-        elif self.phase == 'CHECK_DUSTBIN_ORENATION':
-            if self.orient_to_target(self.dustbinOrientation, tol= np.radians(5)):
-                self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose},  jointState {self.joint_pos}")
-                self.get_logger().info(" Orientation Correct. Moving to Target.")
-                self.phase = 'CALL_DEATTACH_FRUITS'
+#         elif self.phase == 'ON_DUSTBIN_CHECK':
+#             target = self.dustbinPosition.copy()
+
+#             err = np.linalg.norm(target - self.current_tcp_pos)
+#             if err < 0.05:
+#                 self.get_logger().info("we are at the dustbin bro now gp tp check orenataion ")
+#                 self.phase = 'CALL_DEATTACH_FRUITS'
+#             else :
+#                 self.get_logger().info(f"we are  very clove lets try again {err}")
+#                 self.phase ='MOVED_FOR_DUSTBIN'
 
 
-
+# -----------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'CALL_DEATTACH_FRUITS':
                 self.get_logger().info("Deactivating Gripper...")
                 self.set_gripper_state('detach')
+                self.current_fruit_index += 1
                 self.phase = 'DONE'
 
-# -----------------------------------------------------------------------------------------------------------------------
 
-        else :
+# --------------------------------------------------------------------------------------------------------------------------------------
+        elif self.phase  == 'NEXT_PHASE_MASTER':
+            if self.current_fruit_index >= len(self.badFruitTable):
+                self.get_logger().info("All fruits sorted. Stopping.")
+                self.stop_joint()
+                self.phase = 'DONE'
+                return
+            else :
+                self.get_logger().info(f"we are movint for the current fruits {self.current_fruit_index }")
+                self.phase = 'FRUITS_TRAY_ALING'
+
+# -------------------------------------------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+        elif self.phase  == 'FRUITS_TRAY_ALING':
+            if self.move_to_tcp_target(self.fruitHomePosition, tol=0.02, slow=True):
+                self.get_logger().info(f" hover to the fruits tray{self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
+                self.get_logger().info(" we are at the hover at the fruits tary ")
+                self.phase = 'SETTEL_FRUITS_TRAY'
+
+# -----------------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'SETTEL_FRUITS_TRAY':
+            if self.wait_for_timer(3.0):
+                self.phase = 'APPROACH_FRUITS'
+
+# -----------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'DONE':
             self.get_logger().info(f"all task done bro look at the tcp pose ", throttle_duration_sec=2.0)
             pass
-# ------------------------------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------------------
 
 
 def main():
@@ -926,7 +927,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node() 
+        node.destroy_node()
         rclpy.shutdown()
 
 # -------------------------------------------------------------------------------------------------------
