@@ -288,17 +288,17 @@ class Task6(Node):
                         tol_xy=None, tol_z=None):
         """
         Moves TCP to target [x, y, z].
-        
+
         Default behavior (tol_xy=None, tol_z=None):
             Uses single tol for all axes — same as before (backward compatible).
-        
+
         Per-axis behavior (tol_xy and tol_z specified):
             X err < tol_xy  AND  Y err < tol_xy  AND  Z err < tol_z
             All three must be satisfied. This eliminates the sphere bug.
-        
+
         Recommended usage for hover above fruit:
             move_to_tcp_target(hover_target, tol_xy=0.015, tol_z=0.020)
-        
+
         Recommended usage for final approach to fruit:
             move_to_tcp_target(final_target, tol_xy=0.010, tol_z=0.015, slow=True)
         """
@@ -507,6 +507,9 @@ class Task6(Node):
         speed = kp * err                        # signed
         speed = max(min(speed, max_s), -max_s)  # clip magnitude, preserve sign
 
+
+
+
         self.get_logger().info(
             f"Joint {joint_name} | err={np.degrees(err):.1f}° | cmd={speed:.3f}",
             throttle_duration_sec=0.4
@@ -564,16 +567,17 @@ class Task6(Node):
             elif abs_err > 0.17:
                 kp, local_max = 1.2, 0.20
             else:
-                kp, local_max = 1.0, 0.10
+                kp, local_max = 1.0, 0.
 
             speed    = kp * err * speed_scale.get(joint, 1.0)
             speed    = max(min(speed, local_max), -local_max)
+
             cmd[idx] = float(speed)
 
         if not all_reached:
             self.get_logger().info(
-                f"Group move | max_err={np.degrees(max_err_dbg):.1f}° current joint {joint}  with err {err}",
-                throttle_duration_sec=0.4 
+                f"Group move | max_err={np.degrees(max_err_dbg):.1f}° current joint {joint}  with err {err:.3f} speed{speed:.3f}",
+                throttle_duration_sec=0.4
             )
 
 
@@ -736,8 +740,8 @@ class Task6(Node):
             target_pre = self.ferti_pose.copy()
             target_pre[1] += 0.15
             # ========================================================================================
-            # reached = self.move_to_tcp_target_v2(target_pre, tol_xy=0.015, tol_z=0.025)           
-            # 
+            # reached = self.move_to_tcp_target_v2(target_pre, tol_xy=0.015, tol_z=0.025)
+            #
             # ==========================================================================================
             reached = self.move_to_tcp_target(target_pre, tol=0.01, slow=False)
 
@@ -789,7 +793,7 @@ class Task6(Node):
                 self.final_ferti_target[0] += 0.055
                 self.final_ferti_target[1] -= 0.02
                 self.final_ferti_target[2] -=0.001
-                
+
                 self.phase_initialized = True
 
             if self.current_force_z > 30.0:
@@ -871,7 +875,7 @@ class Task6(Node):
             }
 
             speed_scale = {
-                'shoulder_pan_joint': 1.0,  #     <===  CHNAGE HERE IF NEED 
+                'shoulder_pan_joint': 1.0,  #     <===  CHNAGE HERE IF NEED
                 'shoulder_lift_joint': 1.0,
                 'elbow_joint': 0.9,
                 'wrist_1_joint': 1.0,
@@ -1140,11 +1144,11 @@ class Task6(Node):
                 self.get_logger().info(f"lift up done {self.current_tcp_orient} , pose current {self.current_tcp_pos}    jointState {self.joint_pos}")
                 self.get_logger().info("Lift Complete.")
                 self.phase_initialized = False
-                self.phase = 'MOVED_FOR_DUSTBIN_WAIT'    #     <===  CHNAGE HERE IF NEED   DUSTBIN ALING 
+                self.phase = 'MOVED_FOR_DUSTBIN_WAIT'    #     <===  CHNAGE HERE IF NEED   DUSTBIN ALING
 
 # ====================================================================================================================================================
 
-#  IF USE ALING THEN NEED THEN PLEASE ENABLE TO REVRSE 
+#  IF USE ALING THEN NEED THEN PLEASE ENABLE TO REVRSE
 
         elif self.phase == 'BASE_ALING_TO_DUSTBIN':
             if self.align_joint_to_pose(self.dustbinPosition, 'shoulder', self.joint_names_list[0], 0):
@@ -1185,7 +1189,7 @@ class Task6(Node):
                 self.current_fruit_index += 1
                 self.phase = 'RETURN_TRAY_WAIT'  #     <===  CHNAGE HERE IF ALING WALA CONCEPT HAI  NEED  ==||
                                                  #                                  \/
-                
+
 #=====================================================================HERE I COME DIRECTLY SO NOT STORE TRAY THEREFORE NO RETURN POSSIVLR=================================================================================
 # ----------------------------------------------------------------------------------------------------------
         elif self.phase == 'RETRACT_DUSTBIN_POSE':                             #   /\

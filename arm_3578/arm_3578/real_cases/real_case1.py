@@ -171,12 +171,15 @@ class Task5c(Node):
 
         # --------------------------------------------------------------
         self.ebotWorldPosition = None
-        self.ebotWorldPosition = np.array([0.711, 0.006, 0.145])
+        # self.ebotWorldPosition = np.array([0.711, 0.006, 0.145])
         # ------------------------------------------------------------
 
         self.badFruitTable = []
         self.badFruitFrameList = [
             f'{self.teamIdentifier}_bad_fruit_1',
+            f'{self.teamIdentifier}_bad_fruit_2',
+            f'{self.teamIdentifier}_bad_fruit_3',
+
         ]
 
         self.fruitHomePosition = np.array([-0.159, 0.501, 0.415])
@@ -686,8 +689,8 @@ class Task5c(Node):
 
             targets = {
 
-                'wrist_1_joint': -0.100,
-                'wrist_2_joint': 1.9,
+                'wrist_1_joint': -0.110,
+                'wrist_2_joint': 1.95,
             }
 
             speed_scale = {
@@ -728,12 +731,12 @@ class Task5c(Node):
 
             final_ferti_target = self.ferti_pose.copy()
             final_ferti_target[0] += 0.055
-            final_ferti_target[1] -= 0.02
-            final_ferti_target[2] -=0.001
+            final_ferti_target[1] -= 0.03
+            # final_ferti_target[2] -=0.001
 
             reached = self.move_to_tcp_target(final_ferti_target, tol=0.001, slow=True)
 
-            if reached or (self.current_force_z > 30.0):
+            if reached or (self.current_force_z > 20.0):
                 self.stop_all()
                 self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose}")
                 self.get_logger().info("Reached fertilizer hover position. Waiting before attach...")
@@ -741,7 +744,7 @@ class Task5c(Node):
 
 # ---------------------------------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'ATTACH_FERTI_PRE_WAIT':
-            if self.wait_for_timer(2.0):
+            if self.wait_for_timer(1.0):
                 self.phase = 'ATTACH_FERTI_ACTION'
 
         elif self.phase == 'ATTACH_FERTI_ACTION':
@@ -771,7 +774,7 @@ class Task5c(Node):
         elif self.phase == 'PHASE_REVERSE_FROM_FERTI':
             if not self.phase_initialized:
                 self.reverse_target = self.current_tcp_pos.copy()
-                self.reverse_target[1] += 0.15
+                self.reverse_target[1] += 0.35
                 self.phase_initialized = True
                 self.get_logger().info("Reversing safely...")
 
@@ -800,7 +803,7 @@ class Task5c(Node):
             speed_scale = {
                 'shoulder_pan_joint': 1.0,
                 'shoulder_lift_joint': 1.0,
-                'elbow_joint': 0.9,
+                'elbow_joint': 1.0,
                 'wrist_1_joint': 1.0,
                 'wrist_2_joint': 1.0,
                 'wrist_3_joint': 1.0,
@@ -862,7 +865,7 @@ class Task5c(Node):
             if not self.ebot_docked:
                 self.get_logger().info("Waiting for eBot to arrive at dock...", throttle_duration_sec=2.0)
                 return
-            if self.wait_for_timer(5.0):
+            if self.wait_for_timer(1.0):
                 if self.ebotWorldPosition is None:
                     self.ebotWorldPosition = self.lookup_tf(self.base_link_name, self.ebotTransformName)
 
@@ -891,21 +894,7 @@ class Task5c(Node):
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
-        elif self.phase == 'FINAL_APPROACH_EBOT':
-            if not self.phase_initialized:
-                self.target =  self.ebotWorldPosition.copy()
-                self.target[2] -= 0.10
-                self.current_force = self.current_force_z
-                self.phase_initialized = True
-                self.get_logger().info("Phase is intialized ")
-
-
-            reached = self.move_to_tcp_target(self.target , 0.01)
-            if reached or (abs(self.current_force_z -self.current_force) > 5):
-                self.stop_all()
-                self.phase_initialized = False
-                self.get_logger().info("eBot is  Descending  now going to drop")
-                self.phase = 'DROP_FERTI_ON_EBOT'
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
         elif self.phase == 'DROP_FERTI_ON_EBOT':
@@ -1000,13 +989,13 @@ class Task5c(Node):
             self.get_logger().info(f"current magnet force  ({self.current_force_z:.2f} )")
             if not self.phase_initialized:
                 self.final_target = self.current_fruits_pose.copy()
-                self.final_target[0]  -=0.04
-                self.final_target[1] -= 0.01
-                self.final_target[2] -= 0.001
+                self.final_target[0]  -=0.045
+                self.final_target[1] += 0.01
+                # self.final_target[2] -= 0.015
                 self.phase_initialized = True
 
 
-            reached = self.move_to_tcp_target(self.final_target,tol=0.02,slow=True)
+            reached = self.move_to_tcp_target(self.final_target,tol=0.001,slow=True)
 
             if reached or (self.current_force_z > 50.0):
                 self.stop_all()
@@ -1258,7 +1247,7 @@ class Task5c(Node):
 
             if self.move_joint_group(targets, speed_scale):
                 self.get_logger().info("init pose again check sucess ")
-                self.phase = 'WAIT_4_EBOT_FERTI_UNLOAD'
+                self.phase = 'DONE'
 
 # -----------------------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'WAIT_4_EBOT_FERTI_UNLOAD':
