@@ -989,7 +989,7 @@ class Task5c(Node):
             self.get_logger().info(f"current magnet force  ({self.current_force_z:.2f} )")
             if not self.phase_initialized:
                 self.final_target = self.current_fruits_pose.copy()
-                self.final_target[0]  -=0.045
+                self.final_target[0]  -=0.05
                 self.final_target[1] += 0.01
                 # self.final_target[2] -= 0.015
                 self.phase_initialized = True
