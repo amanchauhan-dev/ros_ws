@@ -467,6 +467,7 @@ class SideWallPreview(Node):
             "81":0,
         }
         self.status_published = False
+        self.stop_side = None
 
         # plt.ion()
         # self.fig, self.ax = plt.subplots()
@@ -578,7 +579,7 @@ class SideWallPreview(Node):
         return float(np.mean(np.asarray(points)[:, 1]))
 
 
-    def trigger_stop(self, id, shape):
+    def trigger_stop(self, id, shape, side):
         if self.stop_active:
             return
 
@@ -587,6 +588,7 @@ class SideWallPreview(Node):
 
         msg = Bool()
         msg.data = True
+        self.stop_side = side
         self.stop_pub.publish(msg)
 
         self.stop_active = True
@@ -616,7 +618,7 @@ class SideWallPreview(Node):
                     shape = 0
                 else:
                     shape = 1
-                self.trigger_stop(left_pid, shape = shape)
+                self.trigger_stop(left_pid, shape = shape, side="left")
                 return
 
         # ---------------- RIGHT SIDE ----------------
@@ -635,7 +637,7 @@ class SideWallPreview(Node):
                     shape = 0
                 else:
                     shape = 1
-                self.trigger_stop(right_pid,  shape=shape)
+                self.trigger_stop(right_pid,  shape=shape, side="right")
                 return
 
 
@@ -698,11 +700,25 @@ class SideWallPreview(Node):
                 self.stop_active = False
                 self.stop_end_time = None
 
-                # reset shape buffers AFTER stop
-                self.left_shape = [[0, 0], [0]*9]
-                self.right_shape = [[0, 0], [0]*9]
-                self.left_shape_x = None
-                self.right_shape_x = None
+                # rcleareset shape buffers AFTER stop
+                # self.left_shape = [[0, 0], [0]*9]
+                # self.right_shape = [[0, 0], [0]*9]
+                # self.left_shape_x = None
+                # self.right_shape_x = None
+                    # reset shape buffers ONLY for detected side
+                if self.stop_side == "left":
+                    self.left_shape = [[0, 0], [0]*9]
+                    self.left_shape_x = None
+                    self.left_points_buffer.clear()
+                    self.cur_left_buffer = []
+
+                elif self.stop_side == "right":
+                    self.right_shape = [[0, 0], [0]*9]
+                    self.right_shape_x = None
+                    self.right_points_buffer.clear()
+                    self.cur_right_buffer = []
+
+                self.stop_side = None
 
                 self.get_logger().info("STOP released, buffers reset")
             return   # do NOTHING else while stopped

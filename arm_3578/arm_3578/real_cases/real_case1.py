@@ -343,53 +343,69 @@ class Task5c(Node):
 
 
 # ---------------------------------------------------------------------------------
-    def orient_to_target(self, target_quat, tol=0.05):
+    def orient_to_target(self, target_roll, target_pitch, target_yaw, tol=0.05):
         """
-        Rotates end-effector to target_quat using angular velocity twist commands.
-        Angular velocity published as [rx, ry, rz] in base_link frame.
-        tol: quaternion xyz-part magnitude tolerance (≈ half-angle in rad).
-            tol=0.05 ≈ 5.7 deg  (use 0.03 for tighter ≈ 3.4 deg)
-        Returns True when aligned.
+        * Function Name: orient_to_target
+        * Input:         target_roll  -> float, desired roll  in radians
+        *                target_pitch -> float, desired pitch in radians
+        *                target_yaw   -> float, desired yaw   in radians
+        *                tol          -> float, tolerance on quaternion xyz-part magnitude (default 0.05)
+        * Output:        bool -> True when orientation is within tol, False while rotating
+        * Logic:         Converts input Euler angles to quaternion internally, then computes
+        *                the error quaternion q_err = q_target * inv(q_current).
+        *                The xyz part of q_err gives the rotation axis scaled by sin(half_angle).
+        *                A P-controller with distance-based gain zones drives angular velocity
+        *                published to /delta_twist_cmds via publish_twist.
+        * Example Call:  aligned = self.orient_to_target(0.0, 0.0, 1.57)
         """
         if self.current_tcp_orient is None:
             return False
 
-        # Error quaternion:  q_err = q_target * inv(q_current)
-        # This gives the rotation needed IN THE WORLD/base frame.
+        # --- Convert input Euler angles to quaternion ---
+        target_quat = euler_to_quaternion(target_roll, target_pitch, target_yaw)
+        target_quat = normalize_quaternion(target_quat)
+
+        # --- Log what we're targeting (throttled) ---
+        self.get_logger().info(
+            f"Orient target | R={np.degrees(target_roll):.1f}° "
+            f"P={np.degrees(target_pitch):.1f}° "
+            f"Y={np.degrees(target_yaw):.1f}°",
+            throttle_duration_sec=1.0
+        )
+
+        # --- Error quaternion: q_err = q_target * inv(q_current) ---
         q_curr_inv = conjugate_quaternion(self.current_tcp_orient)
         q_err      = multiply_quaternion(target_quat, q_curr_inv)
 
-        # Shortest path
+        # Enforce shortest-path rotation by flipping if scalar (w) is negative
         if q_err[3] < 0:
             q_err = -q_err
 
-        # q_err = [qx, qy, qz, qw].  The rotation axis*sin(half_angle) = xyz part.
-        xyz_err   = q_err[:3]          # shape (3,)
-        error_mag = np.linalg.norm(xyz_err)    # ≈ sin(half_angle)
+        # xyz part of q_err = rotation_axis * sin(half_angle)
+        xyz_err   = q_err[:3]
+        error_mag = np.linalg.norm(xyz_err)
         deg_err   = np.degrees(2.0 * np.arcsin(np.clip(error_mag, 0, 1)))
 
+        # --- Arrival check ---
         if error_mag < tol:
             self.stop_all()
             self.get_logger().info(f"✓ Orientation aligned. err≈{deg_err:.1f}°")
             return True
 
-        # P-controller — NO hard floor speed
-        kp_rot    = 3.0
-        max_rot   = 0.8   # rad/s
-
-        if error_mag > 0.3:        #
+        # --- Zone-based P-controller ---
+        if error_mag > 0.3:
             kp_rot, max_rot = 3.0, 0.8
-        elif error_mag > 0.1:      #
+        elif error_mag > 0.1:
             kp_rot, max_rot = 2.5, 0.4
-        else:                      #
-            kp_rot, max_rot = 2.0, 0.15  # no floor, tapers naturally
+        else:
+            # Close to target: natural deceleration, no speed floor
+            kp_rot, max_rot = 2.0, 0.15
 
-        ang_speed  = min(kp_rot * error_mag, max_rot)
-        # No floor on ang_speed.  Arm decelerates smoothly.
+        ang_speed = min(kp_rot * error_mag, max_rot)
 
-        # Direction of rotation (unit axis in base frame)
-        ang_axis   = xyz_err / error_mag  if error_mag > 1e-6 else np.zeros(3)
-        angular_vel = ang_axis * ang_speed   # shape (3,) → rx, ry, rz
+        # Normalize to get unit rotation axis; guard against near-zero magnitude
+        ang_axis    = xyz_err / error_mag if error_mag > 1e-6 else np.zeros(3)
+        angular_vel = ang_axis * ang_speed
 
         self.get_logger().info(
             f"Orienting | err≈{deg_err:.1f}° | spd={ang_speed:.3f} "
@@ -397,7 +413,7 @@ class Task5c(Node):
             throttle_duration_sec=0.4
         )
 
-        # Linear = 0; pure rotation
+        # --- Publish pure rotation to /delta_twist_cmds ---
         self.publish_twist([0.0, 0.0, 0.0], angular_vel)
         return False
 
@@ -732,11 +748,11 @@ class Task5c(Node):
             final_ferti_target = self.ferti_pose.copy()
             final_ferti_target[0] += 0.055
             final_ferti_target[1] -= 0.03
-            # final_ferti_target[2] -=0.001
+            final_ferti_target[2] -=0.01
 
             reached = self.move_to_tcp_target(final_ferti_target, tol=0.001, slow=True)
 
-            if reached or (self.current_force_z > 20.0):
+            if reached or (self.current_force_z > 25.0):
                 self.stop_all()
                 self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose}")
                 self.get_logger().info("Reached fertilizer hover position. Waiting before attach...")
@@ -1064,7 +1080,7 @@ class Task5c(Node):
             # shoulder_pan_joint is index 0
             if not self.phase_initialized :
                 start_angle = self.joint_pos['shoulder_pan_joint']
-                self.target_angle = self.norm(start_angle + np.radians(50))
+                self.target_angle = self.norm(start_angle + np.radians(55))
                 self.phase_initialized = True
 
             # 2. Use move_joint_to_angle instead of align_joint_to_pose
@@ -1091,7 +1107,7 @@ class Task5c(Node):
             # self.current_fruit_index += 1
             if not self.phase_initialized :
                 self.target_dustbin = self.current_tcp_pos.copy()
-                self.target_dustbin[0] -= 0.25
+                self.target_dustbin[0] -= 0.20
                 self.phase_initialized = True
 
                 dist_x = self.dustbinPosition[0] - self.current_tcp_pos[0]
@@ -1247,7 +1263,7 @@ class Task5c(Node):
 
             if self.move_joint_group(targets, speed_scale):
                 self.get_logger().info("init pose again check sucess ")
-                self.phase = 'DONE'
+                self.phase = 'WAIT_4_EBOT_FERTI_UNLOAD'
 
 # -----------------------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'WAIT_4_EBOT_FERTI_UNLOAD':

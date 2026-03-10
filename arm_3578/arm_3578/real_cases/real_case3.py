@@ -955,7 +955,7 @@ class Task6(Node):
 
 
         elif self.phase == 'NEW_ORIENTATION_METHOD':
-            if self.orient_to_target(0.0, np.pi/2, 0.0):
+            if self.orient_to_target(np.pi/2,0,np.pi/2):
                 self.phase = 'NEXT_PHASE'
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -975,11 +975,13 @@ class Task6(Node):
             final_ferti_target = self.ferti_pose.copy()
             final_ferti_target[0] += 0.055
             final_ferti_target[1] -= 0.03
+            final_ferti_target[2] -= 0.01
+
 
             reached = self.move_to_tcp_target(final_ferti_target, tol=0.001, slow=True)
 
             # Transition on position arrival OR force contact (whichever comes first)
-            if reached or (self.current_force_z > 20.0):
+            if reached or (self.current_force_z > 25.0):
                 self.stop_all()
                 self.get_logger().info(f"{self.current_tcp_orient} ,euler {self.current_euler} pose current {self.current_tcp_pos} , frti {self.ferti_pose}")
                 self.get_logger().info("Reached fertilizer hover position. Waiting before attach...")
@@ -1250,7 +1252,7 @@ class Task6(Node):
             if not self.phase_initialized:
                 self.final_target = self.current_fruits_pose.copy()
                 # Fine offset to center gripper on the fruit stem
-                self.final_target[0]  -=0.045
+                self.final_target[0]  -=0.05
                 self.final_target[1] += 0.01
                 self.phase_initialized = True
 
@@ -1345,7 +1347,7 @@ class Task6(Node):
             if not self.phase_initialized:
                 self.target_dustbin = self.current_tcp_pos.copy()
                 # Move 25 cm back along X to position over the dustbin opening
-                self.target_dustbin[0] -= 0.25
+                self.target_dustbin[0] -= 0.16
                 self.phase_initialized = True
 
                 # Log distance from current position to the fixed dustbin position for debugging
