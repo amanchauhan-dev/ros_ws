@@ -801,7 +801,7 @@ class Task6(Node):
             if not self.phase_initialized:
                 self.final_ferti_target = self.ferti_pose.copy()
                 self.final_ferti_target[0] += 0.055
-                self.final_ferti_target[1] -= 0.03
+                self.final_ferti_target[1] -= 0.04
                 self.final_ferti_target[2] -=0.01
 
                 self.phase_initialized = True
@@ -858,7 +858,7 @@ class Task6(Node):
         elif self.phase == 'PHASE_REVERSE_FROM_FERTI':
             if not self.phase_initialized:
                 self.reverse_target = self.current_tcp_pos.copy()
-                self.reverse_target[1] += 0.35
+                self.reverse_target[1] += 0.33
                 self.phase_initialized = True
                 self.get_logger().info("Reversing safely...")
 
@@ -989,7 +989,7 @@ class Task6(Node):
                 if joint_name not in self.joint_pos:
                     return
 
-                self.target_wrist_val = self.joint_pos[joint_name] - (np.pi)
+                self.target_wrist_val = self.joint_pos[joint_name] - (np.pi-0.17)
 
                 self.phase_initialized = True
                 self.get_logger().info(f"Rotating Wrist Down... Target: {self.target_wrist_val:.2f}")
@@ -998,21 +998,21 @@ class Task6(Node):
                 self.get_logger().info(" Wrist Oriented Down.")
                 self.get_logger().info(f"gripper down phase {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
                 self.phase_initialized = False
-                self.phase = 'MOVED_DOWNWARD_FERTI'
+                self.phase = 'DROP_FERTI_ON_EBOT'
 
 # ------------------------------------------------------------------------------------------------------------------------------------------------------------
 
         elif self.phase == 'MOVED_DOWNWARD_FERTI':
             if not self.phase_initialized:
                 self.ebotApproach_target = self.current_tcp_pos.copy()
-                self.ebotApproach_target[2] -= 0.08
+                self.ebotApproach_target[2] -= 0.04
                 self.phase_initialized = True
-                self.intail_force = self.current_force_z
+                # self.intail_force = self.current_force_z
                 self.get_logger().info("Reversing safely...")
 
             reached = self.move_to_tcp_target(self.ebotApproach_target, tol=0.02, slow=True)
 
-            if reached or (abs(self.current_force_z - self.initial_arm_pos) > 10.0):
+            if reached:
                 self.get_logger().info("Reverse Complete.")
                 self.phase_initialized = False
                 self.phase = 'DROP_FERTI_ON_EBOT'
