@@ -571,7 +571,7 @@ class Task6(Node):
             elif abs_err > 0.17:
                 kp, local_max = 1.2, 0.20
             else:
-                kp, local_max = 1.0, 0.
+                kp, local_max = 1.0, 0.1
 
             speed    = kp * err * speed_scale.get(joint, 1.0)
             speed    = max(min(speed, local_max), -local_max)
