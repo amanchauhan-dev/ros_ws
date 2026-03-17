@@ -31,6 +31,7 @@ setup(
             "shape_viz = ebot_3578.shape_viz:main",
             "test = ebot_3578.test:main",
             "test_v2 = ebot_3578.test_v2:main",
+            "doc_to_home = ebot_3578.doc_to_home:main",
         ],
     },
 )

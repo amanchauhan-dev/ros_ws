@@ -165,6 +165,7 @@ class FruitsAndArucoTF(Node):
         # Map ArUco id -> object type (per task spec)
         self.ARUCO_OBJECT_MAP = {
             3: 'fertilizer_1',
+             6: 'ebot_marker',
         }
 
         # TF infrastructure
@@ -195,21 +196,6 @@ class FruitsAndArucoTF(Node):
             callback_group=self.cb_group
         )
 
-        # ---------------- LATCHED TF STORAGE ----------------
-        # key -> child_frame_name
-        # value -> (x, y, z, quat)
-        self.latched_tf = {}
-        # ---------------- LATCH REFRESH CONFIG ----------------
-        self.LATCH_REFRESH_SEC = 20.0   # re-detect every 5 seconds
-        # Last time latch was refreshed
-        self.last_latch_time = self.get_clock().now()
-
-
-        # ---------------- AVERAGING CONFIG ----------------
-        self.AVG_SAMPLE_COUNT = 15   # number of samples per object
-
-        # key -> list of (x, y, z)
-        self.position_buffer = {}
 
 
         # Debug image publisher
@@ -344,16 +330,6 @@ class FruitsAndArucoTF(Node):
     # ------------------------------------------------------------------ #
     # Fruit color classification / detection
     # ------------------------------------------------------------------ #
-    def compute_average_position(self, samples):
-        """
-        Compute average (x, y, z) from samples.
-        """
-        arr = np.array(samples, dtype=np.float32)
-        mean = np.mean(arr, axis=0)
-        return float(mean[0]), float(mean[1]), float(mean[2])
-
-
-
     def detect_bad_fruits(self, rgb_image):
             hsv = cv2.cvtColor(rgb_image, cv2.COLOR_BGR2HSV)
             h, w, _ = hsv.shape
@@ -362,17 +338,17 @@ class FruitsAndArucoTF(Node):
             green_mask = cv2.inRange(hsv, (35, 40, 40), (90, 255, 255))
             green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=3)
             green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=3)
-            
+
             cv2.imshow('task3a1', green_mask)
             cv2.waitKey(1)
-        
+
             contours, _ = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
+
             bad_fruits = []
             seq_id = 1
-            
+
             MIN_AREA = 800
-            MAX_AREA = 3000 
+            MAX_AREA = 3000
 
             for cnt in contours:
                 area = cv2.contourArea(cnt)
@@ -390,43 +366,43 @@ class FruitsAndArucoTF(Node):
                 if corner > 4 and circularity > 0.6:
                     (cx, cy), r = cv2.minEnclosingCircle(cnt)
                     cx, cy, r = int(cx), int(cy), int(r)
-                    
-                    
+
+
                     # Start must be smaller than End
-                    x_start = int(cx - r) 
+                    x_start = int(cx - r)
                     x_end = int(cx + r)
-                    
+
                     y_start = int(cy)
                     y_end = int(cy + 1.5 * r)
-                    
+
                     # Boundary checks
                     x_start = max(0, x_start)
                     y_start = max(0, y_start)
                     x_end = min(w, x_end)
                     y_end = min(h, y_end)
-        
+
                     # Check valid dimensions before slicing
                     if x_end - x_start > 0 and y_end - y_start > 0:
                         roi = rgb_image[y_start:y_end, x_start:x_end]
-                        
-                        
+
+
                         if roi.size == 0:
-                            continue  
-                        
+                            continue
+
                         hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
                         # Check for Grey spots (Bad Fruit)
                         lower_gray = np.array([0, 0, 50])
                         upper_gray = np.array([180, 50, 200]) # Tweaked saturation slightly
-                        
+
                         # Count how many pixels are grey
                         grey_pixels = cv2.countNonZero(cv2.inRange(hsv_roi, lower_gray, upper_gray))
 
                         total_pixel_roi = roi.shape[0]*roi.shape[1]
                         grey_ration = grey_pixels/total_pixel_roi
 
-                        
-                        if grey_ration > 0.2: 
+
+                        if grey_ration > 0.2:
                             x, y, w_box, h_box = cv2.boundingRect(cnt)
                             bad_fruits.append({
                                 'id': seq_id,
@@ -436,7 +412,7 @@ class FruitsAndArucoTF(Node):
                             # self.get_logger().info(f"sed_id,grey{seq_id,grey_pixels,total_pixel_roi}")
                             seq_id += 1
 
-            
+
             return bad_fruits
     # ------------------------------------------------------------------ #
     # TF helpers
@@ -608,16 +584,6 @@ class FruitsAndArucoTF(Node):
 
         img = self.cv_image.copy()
         depth = self.depth_image.copy()
-        # ---------------- LATCH REFRESH LOGIC ----------------
-        now = self.get_clock().now()
-        elapsed = (now - self.last_latch_time).nanoseconds * 1e-9
-
-        if elapsed > self.LATCH_REFRESH_SEC:
-            self.get_logger().info(
-                f"[LATCH RESET] Refreshing all TFs after {elapsed:.1f}s"
-            )
-            self.latched_tf.clear()
-            self.last_latch_time = now
 
         # -------- ArUco detection (fertilizer) -------- #
         center_aruco_list, distance_aruco_list, angle_aruco_list, _, \
@@ -658,7 +624,6 @@ class FruitsAndArucoTF(Node):
                         quat = R.from_euler('z', float(angle), degrees=False).as_quat()
                     except Exception:
                         quat = None
-                        
 
                     if int(marker_id) in self.ARUCO_OBJECT_MAP:
                         object_type = self.ARUCO_OBJECT_MAP[int(marker_id)]
@@ -668,79 +633,20 @@ class FruitsAndArucoTF(Node):
                         child_frame = f"obj_{int(marker_id)}"
                         label, color = f"ID:{int(marker_id)}", (255, 0, 255)
 
-                    # -------- LATCHED ARUCO TF --------
-                    if child_frame not in self.latched_tf:
-                        point_cam = PointStamped()
-                        point_cam.header.frame_id = "camera_color_optical_frame"
-                        point_cam.header.stamp = self.get_clock().now().to_msg()
-                        point_cam.point.x = x_cam
-                        point_cam.point.y = y_cam
-                        point_cam.point.z = z_cam
-
-                        try:
-                            point_base = self.tf_buffer.transform(
-                                point_cam,
-                                "base_link",
-                                timeout=Duration(seconds=0.5)
-                            )
-
-                            pos = (
-                                float(point_base.point.x),
-                                float(point_base.point.y),
-                                float(point_base.point.z),
-                            )
-
-                            # Initialize buffer
-                            if child_frame not in self.position_buffer:
-                                self.position_buffer[child_frame] = []
-
-                            # Collect samples
-                            self.position_buffer[child_frame].append(pos)
-
-                            # Once enough samples → average & latch
-                            if len(self.position_buffer[child_frame]) >= self.AVG_SAMPLE_COUNT:
-                                x_avg, y_avg, z_avg = self.compute_average_position(
-                                    self.position_buffer[child_frame]
-                                )
-
-                                self.latched_tf[child_frame] = (
-                                    x_avg,
-                                    y_avg,
-                                    z_avg,
-                                    quat
-                                )
-
-                                self.position_buffer.pop(child_frame)
-
-                                self.get_logger().info(
-                                    f"[AVG LATCHED] {child_frame} @ ({x_avg:.3f}, {y_avg:.3f}, {z_avg:.3f})"
-                                )
-
-
-                            self.get_logger().info(f"[LATCHED] {child_frame}")
-
-                        except Exception as e:
-                            self.get_logger().warn(f"ArUco latch failed for {child_frame}: {e}")
-                            continue
-
-                    x_b, y_b, z_b, quat_b = self.latched_tf[child_frame]
-
-                    self.publish_tf(
-                        "base_link",
-                        child_frame,
-                        x_b,
-                        y_b,
-                        z_b,
-                        quat=quat_b
+                    ok = self.transform_and_publish(
+                        x_cam, y_cam, z_cam, child_frame, quat=quat
                     )
-
-                    # Always draw (no ok check)
-                    cv2.circle(img, (cX, cY), 5, color, -1)
-                    cv2.putText(
-                        img, label, (cX + 10, cY - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2
-                    )
-
+                    if ok:
+                        cv2.circle(img, (cX, cY), 5, color, -1)
+                        cv2.putText(
+                            img,
+                            label,
+                            (cX + 10, cY - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            color,
+                            2,
+                        )
                 except Exception as e:
                     self.get_logger().warn(f"Aruco handling error: {e}")
                     continue
@@ -767,83 +673,47 @@ class FruitsAndArucoTF(Node):
                     self.get_logger().warn(f"Fruit {seq_id} has invalid depth, skipping")
                     continue
 
-                x_cam, y_cam, z_cam = self.convert_pixel_to_3d(cX, cY, distance)
+                # ---------------------------------------------------
+                # Compute fruit surface point using estimated radius
+                # ---------------------------------------------------
+                # Estimate fruit radius in pixels (half of bounding box width)
+                radius_pixels = w / 2.0
+                # Convert radius from pixels to meters using pinhole model
+                radius_meters = (radius_pixels * distance) / self.focalX
+                # Subtract radius to get depth of fruit surface (front face)
+                surface_depth = distance - radius_meters
+                # Safety check: surface_depth must be positive
+                if surface_depth <= 0:
+                    surface_depth = distance
+                # Compute 3D surface point in camera optical frame
+                x_cam, y_cam, z_cam = self.convert_pixel_to_3d(cX, cY, surface_depth)
 
-                # -------- LATCHED BAD FRUIT TF --------
-                if fruit_frame_name not in self.latched_tf:
-                    point_cam = PointStamped()
-                    point_cam.header.frame_id = "camera_color_optical_frame"
-                    point_cam.header.stamp = self.get_clock().now().to_msg()
-                    point_cam.point.x = x_cam
-                    point_cam.point.y = y_cam
-                    point_cam.point.z = z_cam
+                self.get_logger().info(
+                    f"Fruit {seq_id}: center_depth={distance:.3f}m  "
+                    f"radius_px={radius_pixels:.1f}px  "
+                    f"radius_m={radius_meters:.4f}m  "
+                    f"surface_depth={surface_depth:.3f}m"
+                )
 
-                    try:
-                        point_base = self.tf_buffer.transform(
-                            point_cam,
-                            "base_link",
-                            timeout=Duration(seconds=0.5)
-                        )
-
-                        pos = (
-                            float(point_base.point.x),
-                            float(point_base.point.y),
-                            float(point_base.point.z),
-                        )
-
-                        if fruit_frame_name not in self.position_buffer:
-                            self.position_buffer[fruit_frame_name] = []
-
-                        self.position_buffer[fruit_frame_name].append(pos)
-
-                        if len(self.position_buffer[fruit_frame_name]) >= self.AVG_SAMPLE_COUNT:
-                            x_avg, y_avg, z_avg = self.compute_average_position(
-                                self.position_buffer[fruit_frame_name]
-                            )
-
-                            self.latched_tf[fruit_frame_name] = (
-                                x_avg,
-                                y_avg,
-                                z_avg,
-                                [0.0, 0.0, 0.0, 1.0]
-                            )
-
-                            self.position_buffer.pop(fruit_frame_name)
-
-                            self.get_logger().info(
-                                f"[AVG LATCHED] {fruit_frame_name} @ ({x_avg:.3f}, {y_avg:.3f}, {z_avg:.3f})"
-                            )
-
-
-                        self.get_logger().info(f"[LATCHED] {fruit_frame_name}")
-
-                    except Exception as e:
-                        self.get_logger().warn(f"Fruit latch failed for {fruit_frame_name}: {e}")
-                        continue
-
-                x_b, y_b, z_b, quat_b = self.latched_tf[fruit_frame_name]
-
-                self.publish_tf(
-                    "base_link",
+                ok = self.transform_and_publish(
+                    x_cam,
+                    y_cam,
+                    z_cam,
                     fruit_frame_name,
-                    x_b,
-                    y_b,
-                    z_b,
-                    quat=quat_b
+                    quat=None,
                 )
-
-                # Always draw
-                cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                cv2.circle(img, (int(cX), int(cY)), 6, (0, 255, 0), -1)
-                cv2.putText(
-                    img, f"bad_{seq_id}",
-                    (x, y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                    (0, 255, 0), 2
-                )
-
-
-
+                if ok:
+                    cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                    cv2.circle(img, (int(cX), int(cY)), 6, (0, 255, 0), -1)
+                    cv2.putText(
+                        img,
+                        f"bad_{seq_id}",
+                        (x, y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 0),
+                        2,
+                    )
             except Exception as e:
                 self.get_logger().warn(f"Bad fruit handling error: {e}")
                 continue

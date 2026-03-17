@@ -30,8 +30,8 @@ from std_msgs.msg import Bool, String
 # ============================================================
 
 # ---------- Lane limits (world frame) ----------
-LANE_MIN_X = 1.0
-LANE_MAX_X = 4.4
+LANE_MIN_X = 0.8    # 1.0
+LANE_MAX_X = 4.4    # 4.4
 
 # ---------- Side sector definition (robot frame) ----------
 LEFT_SECTOR_ANGLE   = math.pi / 2

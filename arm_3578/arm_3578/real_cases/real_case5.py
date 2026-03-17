@@ -72,19 +72,19 @@ def quaternion_to_euler(quaternion):
     return roll_angle, pitch_angle, yaw_angle
 
 
-class Task5c(Node):
+class Task6(Node):
     def __init__(self):
-        super().__init__('Task5c')
+        super().__init__('Task6')
 
         self.service_callback_group = ReentrantCallbackGroup()
 
         # ===================publishers========================
-        # CHANGED: TwistStamped
+
         self.twist_pub = self.create_publisher(TwistStamped, '/delta_twist_cmds', 10)
-        # CHANGED: JointJog
+
         self.joint_pub = self.create_publisher(JointJog, '/delta_joint_cmds', 10)
         self.fertilizer_status_publisher = self.create_publisher(Bool, '/fertilizer_placement_status', 10)
-        # DEFINED: Joint Names List
+
         self.joint_names_list = [
             'shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint',
             'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint'
@@ -123,7 +123,7 @@ class Task5c(Node):
             )
 
 
-        self.ebot_docked = True
+        self.ebot_docked = False
         self.ebot_dock_subscriber = self.create_subscription(
             Bool,
             '/ebot_dock_status',
@@ -134,7 +134,7 @@ class Task5c(Node):
 
 
         self.timer = self.create_timer(
-                        0.02,
+                        0.01,
                         self.main_loop,
                         callback_group=self.service_callback_group
                     )
@@ -146,52 +146,58 @@ class Task5c(Node):
         self.base_link_name = 'base_link'
         self.joint_pos = {}
 
-        #  variables
+        # tcp_pose variables
         self.safe_lift_angle = None
         self.current_tcp_pos = None
         self.current_tcp_orient = None
+        self.current_euler_angel = None
         self.initial_arm_pos = None
 
+        self.ferti_align_joint_state = None
+        self.fruits_tray_hover_pos = None
+        self.ferti_unload_pose = None
 
         self.max_tol = np.deg2rad(3)
         self.base_kp = 1.0
-        self.base_max_speed = 0.5
+        self.base_max_speed = 0.5        # Linear Max
         self.base_max_angular = 1.5
-        self.wrist1_delta_down = -1.36
-
         # phases config
 
         self.phase = 'START'
 
         self.ferti_pose = None
-        self.ferti_unload_pose = None
         self.fertilizerTFname = f'{self.teamIdentifier}_fertilizer_1'
         self.ebotTransformName = f'{self.teamIdentifier}_ebot_marker'
+        self.pickupFertiOrientationQuaternion = np.array([0.707, 0.028, 0.034, 0.707])
 
         # --------------------------------------------------------------
-        # self.ebotWorldPosition = None
+        self.ebotWorldPosition = None
         self.ebotWorldPosition = np.array([0.711, 0.006, 0.145])
         # ------------------------------------------------------------
 
         self.badFruitTable = []
         self.badFruitFrameList = [
             f'{self.teamIdentifier}_bad_fruit_1',
-              f'{self.teamIdentifier}_bad_fruit_2',
-                f'{self.teamIdentifier}_bad_fruit_3',
+            f'{self.teamIdentifier}_bad_fruit_2',
+            f'{self.teamIdentifier}_bad_fruit_3',
         ]
 
         self.fruitHomePosition = np.array([-0.159, 0.501, 0.415])
+
         # -----------------------------------------------------------------------------------
-        self.dustbinPosition = np.array([-0.806, 0.010, 0.182])
+        self.dustbinPosition = np.array([-0.682, 0.210, 0.316])
+
         # -----------------------------------------------------------------------------------
         self.phase_initialized = False
         self.current_fruits_pose = None
         self.wait_start_time = None
+        self.wrist1_delta_down = 1.36  # radinal in the degree  near 90
         self.current_fruit_index = 0
         self.current_force_z = 0.0
         # -----------------------------------------------------------------------------------------
 
-
+        self.safe_lift_angle = None
+        self.dustbin_hover_pose = None
 
 # ====================callbacks===============================================
     def joint_state_callback(self, msg):
@@ -207,6 +213,7 @@ class Task5c(Node):
             roll = msg.data[3]
             pitch = msg.data[4]
             yaw = msg.data[5]
+            self.current_euler_angel = np.array([roll, pitch, yaw])
             self.current_tcp_orient = euler_to_quaternion(roll, pitch, yaw)
 
     def force_callback(self, msg):
@@ -238,10 +245,9 @@ class Task5c(Node):
                 return False
 
             req.data = True
-            self.get_logger().info(f"Force Good ({self.current_force_z:.2f} > 30). Magnet ON.")
+            self.get_logger().info(f"Force Attach call  ({self.current_force_z:.2f} ). Magnet ON.")
             self.magnet_client.call_async(req)
             return True
-
         else:
             req.data = False
             self.get_logger().info("Magnet OFF.")
@@ -250,14 +256,13 @@ class Task5c(Node):
 
 # =================motion commands==========================================
     def stop_joint(self):
-        # CHANGED: JointJog
+
         msg = JointJog()
         msg.joint_names = self.joint_names_list
         msg.velocities = [0.0] * 6
         self.joint_pub.publish(msg)
 
     def publish_twist(self, linear_vel, angular_vel=None):
-        # CHANGED: Use TwistStamped
         msg = TwistStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'base_link'
@@ -281,207 +286,322 @@ class Task5c(Node):
 
 # =============================DELTA_TWIST_CMD================================
 
-
-# --------------------------------------------------------------------------------------------------------
-# this is simple version of servo to goal   for only to move x,y,z
-    def move_to_tcp_target(self, target, tol=0.01, slow=False):
+    def move_to_tcp_target_v2(self, target, tol=0.01, slow=False,
+                        tol_xy=None, tol_z=None):
         """
-        A simplified position-only mover.
-        Useful as a fallback or for simple XYZ adjustments.
+        Moves TCP to target [x, y, z].
+
+        Default behavior (tol_xy=None, tol_z=None):
+            Uses single tol for all axes — same as before (backward compatible).
+
+        Per-axis behavior (tol_xy and tol_z specified):
+            X err < tol_xy  AND  Y err < tol_xy  AND  Z err < tol_z
+            All three must be satisfied. This eliminates the sphere bug.
+
+        Recommended usage for hover above fruit:
+            move_to_tcp_target(hover_target, tol_xy=0.015, tol_z=0.020)
+
+        Recommended usage for final approach to fruit:
+            move_to_tcp_target(final_target, tol_xy=0.010, tol_z=0.015, slow=True)
         """
         if self.current_tcp_pos is None:
             return False
 
-        # 1. Calculate Error
-        err = target - self.current_tcp_pos
-        dist = np.linalg.norm(err)
+        err_vec = target - self.current_tcp_pos
+        err_x   = abs(err_vec[0])
+        err_y   = abs(err_vec[1])
+        err_z   = abs(err_vec[2])
+        dist    = np.linalg.norm(err_vec)   # still used for speed calc
 
-        if dist < tol:
+        # ── Arrival Check (per-axis if specified, else sphere) ──────────────────
+        if tol_xy is not None and tol_z is not None:
+            x_ok = err_x < tol_xy
+            y_ok = err_y < tol_xy
+            z_ok = err_z < tol_z
+            reached = x_ok and y_ok and z_ok
+            self.get_logger().info(
+                f"TCP err | X:{err_x*1000:.1f}mm({'✓' if x_ok else '✗'}) "
+                f"Y:{err_y*1000:.1f}mm({'✓' if y_ok else '✗'}) "
+                f"Z:{err_z*1000:.1f}mm({'✓' if z_ok else '✗'})",
+                throttle_duration_sec=0.4
+            )
+        else:
+            # fallback: original sphere check
+            reached = dist < tol
+
+        if reached:
             self.stop_all()
-            self.get_logger().info(f"✓ Reached Target (XYZ Only). Final Error: {dist:.4f}m")
+            self.get_logger().info(
+                f"✓ TCP reached | X:{err_x*1000:.1f} Y:{err_y*1000:.1f} Z:{err_z*1000:.1f} mm"
+            )
             return True
 
-        # 3. Determine Speed Zone (The Creep Approach)
+        # ── Speed Zones (unchanged from v2) ─────────────────────────────────────
         if slow:
-            max_s = 0.15
-            kp = 1.5
+            if dist > 0.10:
+                kp, max_s = 1.5, 0.12
+            elif dist > 0.03:
+                kp, max_s = 1.0, 0.05
+            else:
+                kp, max_s = 1.0, 0.01
         else:
-            max_s = 0.4
-            kp = 2.0
+            if dist > 0.30:
+                kp, max_s = 2.5, 0.50
+            elif dist > 0.20:
+                kp, max_s = 2.0, 0.40
+            elif dist > 0.10:
+                kp, max_s = 1.8, 0.20
+            else:
+                kp, max_s = 1.2, 0.06
 
-        if dist < 0.05:
-            max_s = 0.05
-            kp = 1.0
-
-        # 4. Calculate Velocity
-        desired_speed = kp * dist
-        speed = min(desired_speed, max_s)
-
-        if speed < 0.05:
-            speed = 0.05
-
-        direction = err / dist
+        speed      = min(kp * dist, max_s)
+        direction  = err_vec / dist
         linear_vel = direction * speed
 
-        # 5. Logging (Throttled)
         self.get_logger().info(
-            f"Fallback Move | Dist: {dist:.3f}m | Speed: {speed:.3f}",
-            throttle_duration_sec=0.5
+            f"TCP {'SLOW' if slow else 'FAST'} | dist={dist:.3f}m | spd={speed:.3f}",
+            throttle_duration_sec=0.4
         )
-
-        # 6. Publish
-        self.publish_twist(linear_vel, angular_vel=None)
-
+        self.publish_twist(linear_vel, [0.0, 0.0, 0.0])
         return False
 
+# --------------------------------------------------------------------------------------------------------
+    def move_to_tcp_target(self, target, tol=0.01, slow=False):
+        """
+        Moves TCP to target [x,y,z].  Distance-adaptive P-controller.
+        NO hard minimum speed near target → arm gracefully decelerates to stop.
+        Force/wrench logic is intentionally NOT here — handle it in your phase.
+        Returns True when within tol.
+        """
+        if self.current_tcp_pos is None:
+            return False
+
+        err_vec = target - self.current_tcp_pos
+        dist    = np.linalg.norm(err_vec)
+
+        # --- Arrival check ---
+        if dist < tol:
+            self.stop_all()
+            self.get_logger().info(f"✓ TCP reached. dist={dist*1000:.1f}mm")
+            return True
+
+        # --- Speed zones ---
+
+        if slow:
+            if dist > 0.10:
+                kp, max_s = 1.5, 0.12
+            elif dist > 0.05:
+                kp, max_s = 1.0, 0.05
+            else:
+                kp, max_s = 1.0, 0.02
+        else:
+            if dist > 0.30:
+                kp, max_s = 2.5, 0.50
+            elif dist > 0.20:
+                kp, max_s = 2.0, 0.40
+            elif dist > 0.10:
+                kp, max_s = 1.8, 0.20
+            else:
+                kp, max_s = 1.2, 0.06
+
+        speed      = min(kp * dist, max_s)
+        direction  = err_vec / dist
+        linear_vel = direction * speed
+
+        self.get_logger().info(
+            f"TCP move | dist={dist:.3f}m | spd={speed:.3f} | slow={slow}",
+            throttle_duration_sec=0.1
+        )
+        self.publish_twist(linear_vel, [0.0, 0.0, 0.0])
+        return False
+
+
+# ---------------------------------------------------------------------------------
+    def orient_to_target(self, target_quat, tol=0.05):
+        """
+        Rotates end-effector to target_quat using angular velocity twist commands.
+        Angular velocity published as [rx, ry, rz] in base_link frame.
+        tol: quaternion xyz-part magnitude tolerance (≈ half-angle in rad).
+            tol=0.05 ≈ 5.7 deg  (use 0.03 for tighter ≈ 3.4 deg)
+        Returns True when aligned.
+        """
+        if self.current_tcp_orient is None:
+            return False
+
+        # Error quaternion:  q_err = q_target * inv(q_current)
+        # This gives the rotation needed IN THE WORLD/base frame.
+        q_curr_inv = conjugate_quaternion(self.current_tcp_orient)
+        q_err      = multiply_quaternion(target_quat, q_curr_inv)
+
+        # Shortest path
+        if q_err[3] < 0:
+            q_err = -q_err
+
+        # q_err = [qx, qy, qz, qw].  The rotation axis*sin(half_angle) = xyz part.
+        xyz_err   = q_err[:3]          # shape (3,)
+        error_mag = np.linalg.norm(xyz_err)    # ≈ sin(half_angle)
+        deg_err   = np.degrees(2.0 * np.arcsin(np.clip(error_mag, 0, 1)))
+
+        if error_mag < tol:
+            self.stop_all()
+            self.get_logger().info(f"✓ Orientation aligned. err≈{deg_err:.1f}°")
+            return True
+
+        # P-controller — NO hard floor speed
+        kp_rot    = 3.0
+        max_rot   = 0.8   # rad/s
+
+        if error_mag > 0.3:        #
+            kp_rot, max_rot = 3.0, 0.8
+        elif error_mag > 0.1:      #
+            kp_rot, max_rot = 2.5, 0.4
+        else:                      #
+            kp_rot, max_rot = 2.0, 0.15  # no floor, tapers naturally
+
+        ang_speed  = min(kp_rot * error_mag, max_rot)
+        # No floor on ang_speed.  Arm decelerates smoothly.
+
+        # Direction of rotation (unit axis in base frame)
+        ang_axis   = xyz_err / error_mag  if error_mag > 1e-6 else np.zeros(3)
+        angular_vel = ang_axis * ang_speed   # shape (3,) → rx, ry, rz
+
+        self.get_logger().info(
+            f"Orienting | err≈{deg_err:.1f}° | spd={ang_speed:.3f} "
+            f"| axis=[{ang_axis[0]:.2f},{ang_axis[1]:.2f},{ang_axis[2]:.2f}]",
+            throttle_duration_sec=0.4
+        )
+
+        # Linear = 0; pure rotation
+        self.publish_twist([0.0, 0.0, 0.0], angular_vel)
+        return False
 
 # ============================ JOINT DELTA CMD =====================================================
 
 
 # ----------------------------------------------------------------------------------------
-    def move_joint_to_angle(self, target_angle, joint_name, joint_index, tol=0.05):
+    def move_joint_to_angle(self, target_angle, joint_name, joint_index, tol=0.02):
         """
-        Master function to move any single joint to a specific angle.
-        Includes Speed Ramping and Debug Logging.
+        Moves a single joint to target_angle [rad].
+        Speed tapers naturally to zero — no hard minimum that causes overshoot.
         """
         if joint_name not in self.joint_pos:
             return False
 
         current = self.joint_pos[joint_name]
-        err = self.norm(target_angle - current)
+        err     = self.norm(target_angle - current)
+        abs_err = abs(err)
 
-        if abs(err) < tol:
+        if abs_err < tol:
             self.stop_joint()
-            self.get_logger().info(f"✓ Joint {joint_name} Reached. Err: {err:.4f}")
+            self.get_logger().info(f"✓ Joint {joint_name} at target. err={np.degrees(err):.2f}°")
             return True
 
-        if abs(err) > 1.5:
-            kp = 2.0
-            max_s = self.base_max_speed
-        elif abs(err) > 0.17 or abs(err) > 1.0 :
-            kp = 1.5
-            max_s = 0.5
-        else:
-            kp = 1.0
-            max_s = 0.1
+        # Speed zones — no hard floor
+        if abs_err > 1.5:
+            kp, max_s = 2.0, self.base_max_speed
+        elif abs_err > 0.5:
+            kp, max_s = 1.5, self.base_max_speed
+        elif abs_err > 0.17:
+            kp, max_s = 1.2, 0.3
+        else:                    # close-in: natural decel
+            kp, max_s = 1.0, 0.10
 
-        speed = kp * err
-        speed = max(min(speed, max_s), -max_s)
+        speed = kp * err                        # signed
+        speed = max(min(speed, max_s), -max_s)  # clip magnitude, preserve sign
 
-        # If speed is too small (but not zero), boost it
         if abs(speed) < 0.05:
             if speed > 0:
                 speed = 0.05
             else:
                 speed = -0.05
-        # --------------------------------
 
-        deg_err = np.degrees(err)
+
         self.get_logger().info(
-            f"Joint: {joint_name} | Err: {deg_err:.1f}° | Cmd: {speed:.3f}",
-            throttle_duration_sec=0.5
+            f"Joint {joint_name} | err={np.degrees(err):.1f}° | cmd={speed:.3f}",
+            throttle_duration_sec=0.4
         )
-        # ==========================================================
 
         cmd = [0.0] * 6
         cmd[joint_index] = float(speed)
 
         msg = JointJog()
         msg.joint_names = self.joint_names_list
-        msg.velocities = cmd
+        msg.velocities  = cmd
         self.joint_pub.publish(msg)
-
         return False
 
 # ------------------------------------------------------------------------------------------------------
     def move_joint_group(self, targets, speed_scale):
         """
-        Moves multiple joints simultaneously.
-        Includes safety ramping for each individual joint.
+        Moves multiple joints simultaneously.  Each joint decelerates naturally.
         """
         if not self.joint_pos:
             return False
 
         joint_map = {
             'shoulder_pan_joint': 0, 'shoulder_lift_joint': 1, 'elbow_joint': 2,
-            'wrist_1_joint': 3, 'wrist_2_joint': 4, 'wrist_3_joint': 5,
+            'wrist_1_joint': 3,      'wrist_2_joint': 4,       'wrist_3_joint': 5,
         }
 
-        cmd = [0.0] * 6
+        cmd         = [0.0] * 6
         all_reached = True
-        max_err_debug = 0.0 # Track the worst error for logging
+        max_err_dbg = 0.0
 
         for joint, target in targets.items():
             if joint not in self.joint_pos:
-                # If we can't see the joint, assume we aren't there yet
                 all_reached = False
                 continue
 
-            idx = joint_map[joint]
-            current = self.joint_pos[joint]
-            err = self.norm(target - current)
+            idx     = joint_map[joint]
+            err     = self.norm(target - self.joint_pos[joint])
             abs_err = abs(err)
 
-            # Update debug stat
-            if abs_err > max_err_debug:
-                max_err_debug = abs_err
+            if abs_err > max_err_dbg:
+                max_err_dbg = abs_err
 
-            # 1. Check if this specific joint is done
             if abs_err < self.max_tol:
                 cmd[idx] = 0.0
+                continue
+
+            all_reached = False
+
+            # Speed zones — no hard floor
+            if abs_err > 1.5:
+                kp, local_max = 2.0, 1.0
+            elif abs_err > 0.5:
+                kp, local_max = 1.5, 0.5
+            elif abs_err > 0.17:
+                kp, local_max = 1.2, 0.20
             else:
-                all_reached = False
+                kp, local_max = 1.0, 0.
 
-                # 2. Speed Ramping (Per Joint)
-                if abs_err > 1.5:          # Far
-                    kp = 2.0
-                    local_max = self.base_max_speed
-                elif abs(err) > 0.17 or abs(err) > 1.0 :         # Medium
-                    kp = 1.5
-                    local_max = 0.5
-                else:                      # Close (Creep)
-                    kp = 1.0
-                    local_max = 0.1
+            speed    = kp * err * speed_scale.get(joint, 1.0)
+            speed    = max(min(speed, local_max), -local_max)
 
-                # Calculate Base Speed
-                speed = kp * err
+            if abs(speed) < 0.05:
+                if speed > 0:
+                    speed = 0.05
+                else:
+                    speed = -0.05
 
-                # Apply custom scale (if you want one joint slower than others)
-                speed *= speed_scale.get(joint, 1.0)
+            cmd[idx] = float(speed)
 
-
-                # Clip to safe limits
-                speed = max(min(speed, local_max), -local_max)
-            # lower speed control
-                if abs(speed) < 0.05:
-                    if speed > 0:
-                        speed = 0.05
-                    else:
-                        speed = -0.05
-                # --------------------------------
-
-                cmd[idx] = float(speed)
-
-        # 3. Log Status (Throttled)
         if not all_reached:
             self.get_logger().info(
-                f"Group Move... Max Joint Err: {np.degrees(max_err_debug):.1f}°",
-                throttle_duration_sec=0.5
+                f"Group move | max_err={np.degrees(max_err_dbg):.1f}° current joint {joint}  with err {err:.3f} speed{speed:.3f}",
+                throttle_duration_sec=0.4
             )
 
-        # 4. Publish Command
+
         msg = JointJog()
         msg.joint_names = self.joint_names_list
-        msg.velocities = cmd
+        msg.velocities  = cmd
         self.joint_pub.publish(msg)
 
-        # 5. Stop if everyone is done
         if all_reached:
             self.stop_all()
-            self.get_logger().info("✓ Joint Group Target Reached.")
-
+            self.get_logger().info("✓ Joint group reached.")
         return all_reached
-
 
 # ------------------------------------------------------------------------------------------------------------
     def align_joint_to_pose(self, target_pose, target_label, joint_name, joint_index):
@@ -527,6 +647,7 @@ class Task5c(Node):
             position = self.lookup_tf(self.base_link_name, frame_name)
             if position is not None:
                 found_records.append({'tf_name': frame_name, 'pos': position})
+                self.get_logger().info(f"current fruits id {frame_name} , pos {position}")
             else:
                 all_detected = False
                 break
@@ -615,55 +736,43 @@ class Task5c(Node):
             self.get_logger().info("✓ All TFs acquired. Starting Phase 2.")
             self.phase = 'PHASE_ALIGN_TO_FERTI'
 
-# -----------------------------------------------------------------------------------------------------------------------
-
-        elif self.phase == 'PHASE_SAFE_LIFT_SHOULDER':
-            if self.safe_lift_angle is None:
-                current_val = self.joint_pos[self.joint_names_list[1]]
-                self.safe_lift_angle = current_val - 0.2
-                self.get_logger().info(f"Lifting Shoulder...  Note only for the gazebo because the elbow get colied with the fruits tray   Target: {self.safe_lift_angle:.2f}")
-            # 2  we are approach the target
-            if self.move_joint_to_angle(self.safe_lift_angle, self.joint_names_list[1], 1):
-                self.get_logger().info(" Safe Lift Complete. we are moving into next phase ")
-                self.phase = 'PHASE_ALIGN_TO_FERTI'
-
 # ----------------------------------------------------------------------------------------------------------------------
 
         elif self.phase == 'PHASE_ALIGN_TO_FERTI':
-            # 1. Align Shoulder to Fertilizer
             if self.align_joint_to_pose(self.ferti_pose, 'shoulder', self.joint_names_list[0], 0):
                 self.get_logger().info("Aligned shoulder to fertilizer. Transitioning to PRE_APPROACH.")
-
                 self.phase = 'ALING_WAIT_FERTI'
+
 # ---------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'ALING_WAIT_FERTI':
-            if self.wait_for_timer(3.0):
+            if self.wait_for_timer(1.0):
                 self.phase = 'PHASE_PRE_APPROACH'
 # ----------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'PHASE_PRE_APPROACH':
             target_pre = self.ferti_pose.copy()
             target_pre[1] += 0.15
-
-            reached = self.move_to_tcp_target(target_pre, tol=0.01, slow=True)
+            # ========================================================================================
+            # reached = self.move_to_tcp_target_v2(target_pre, tol_xy=0.015, tol_z=0.025)
+            #
+            # ==========================================================================================
+            reached = self.move_to_tcp_target(target_pre, tol=0.01, slow=False)
 
             if reached:
-                self.get_logger().info(f" this is when  intint {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
-                self.get_logger().info(" Reached +0.10 offset. n ow ckeck orenation first .")
+                self.get_logger().info(" Reached +0.15 offset. now ckeck orenation first.")
                 self.phase = 'PREAPPROACH_WAIT_FERTI'
 
-# ---------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'PREAPPROACH_WAIT_FERTI':
-            if self.wait_for_timer(3.0):
+            if self.wait_for_timer(1.0):
                 self.phase = 'MOVE_ORENATION_REQUIRED'
-# ----------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------------------------------------------------
 
         elif self.phase == 'MOVE_ORENATION_REQUIRED':
 
             targets = {
 
-
-                'wrist_1_joint': -0.100,
-                'wrist_2_joint': 1.9,
+                'wrist_1_joint': -0.110,
+                'wrist_2_joint': 1.95,
             }
 
             speed_scale = {
@@ -673,49 +782,63 @@ class Task5c(Node):
             }
 
 
-
             if self.move_joint_group(targets, speed_scale):
-                self.get_logger().info(f" orentaion wala hai   {self.current_tcp_orient} , pose current {self.current_tcp_pos} \n, frti {self.ferti_pose} \n,jointState {self.joint_pos}")
+                self.get_logger().info(f" orentaion wala hai   {self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose}")
                 self.phase = 'PHASE_FINAL_APPROACH_WAIT'
 
+# --------------------------------------------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'PHASE_FINAL_APPROACH_WAIT':
-            if self.wait_for_timer(3.0):
+            if self.wait_for_timer(1.0):
                 self.get_logger().info("Fertilizer MAgnet start hai ")
                 self.set_gripper_state('attach')
                 self.phase = 'PHASE_FINAL_APPROACH'
 
-# -----------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'PHASE_FINAL_APPROACH':
+# -------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-            self.get_logger().info(f"current magnet force  ({self.current_force_z:.2f} )")
+
+
+        elif self.phase == 'PHASE_FINAL_APPROACH':
+            self.get_logger().info(f"current magnet force ({self.current_force_z:.2f})")
 
             if not self.phase_initialized:
                 self.final_ferti_target = self.ferti_pose.copy()
-                self.final_ferti_target[0] += 0.05
-                self.final_ferti_target[1] -= 0.015
-                self.final_ferti_target[2] -= 0.01
+                self.final_ferti_target[0] += 0.055
+                self.final_ferti_target[1] -= 0.04
+                self.final_ferti_target[2] -=0.01
+
                 self.phase_initialized = True
-                self.get_logger().info(f"we are set offset now move to target ")
-                self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose} , jointState {self.joint_pos}")
 
-            reached = self.move_to_tcp_target(self.final_ferti_target, tol=0.001, slow=True)
-
-            if reached or (self.current_force_z > 12.0) :
-                self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose} , jointState {self.joint_pos}")
-                self.get_logger().info("Reached fertilizer position. Waiting before attach...")
+            if self.current_force_z > 30.0:
+                self.stop_all()
                 self.phase_initialized = False
+                self.get_logger().info(f"Force contact! {self.current_force_z:.1f}N → advancing")
                 self.phase = 'ATTACH_FERTI_PRE_WAIT'
+                return
+            reached = self.move_to_tcp_target(self.final_ferti_target, tol=0.001, slow=True)
+            # =======================================================================================================================
 
-# -------------------------------------------------------------------------------------------------------------------------
+            # reached = self.move_to_tcp_target_v2(
+            #     self.final_ferti_target, tol_xy=0.008, tol_z=0.010, slow=True
+            # )
+            # ==========================================================================================================================
+            if reached:
+                self.stop_all()
+                self.phase_initialized = False
+                self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose}")
+                self.get_logger().info("Reached fertilizer hover position. Waiting before attach...")
+                self.phase = 'ATTACH_FERTI_PRE_WAIT'
+# =============================================================================================================================================
+
         elif self.phase == 'ATTACH_FERTI_PRE_WAIT':
-            if self.wait_for_timer(5.0):
+            if self.wait_for_timer(2.0):
                 self.phase = 'ATTACH_FERTI_ACTION'
-#  the below phase is garbage nut the old concept therfore i kept here
+
         elif self.phase == 'ATTACH_FERTI_ACTION':
                 self.set_gripper_state('attach')
                 self.phase = 'PHASE_LIFT_FERTILIZER'
 
-# -----------------------------------------------------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'PHASE_LIFT_FERTILIZER':
             if not self.phase_initialized:
                  self.lift_target = self.current_tcp_pos.copy()
@@ -723,22 +846,21 @@ class Task5c(Node):
                  self.phase_initialized = True
                  self.get_logger().info(f"Lifting to: {self.lift_target}")
 
-            if self.move_to_tcp_target(self.lift_target, tol=0.02, slow=True):
-                self.get_logger().info(f" this is when  lift {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
+            if self.move_to_tcp_target(self.lift_target, tol=0.001, slow=True):
                 self.get_logger().info("Lift Complete.")
                 self.phase_initialized = False
-                self.phase = 'PHASE_REVERSE_FROM_FERTI'
+                self.phase = 'PHASE_REVERSE_FROM_FERTI_WAIT'
 
 # -------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'PHASE_REVERSE_FROM_FERTI_WAIT':
-            if self.wait_for_timer(3.0):
+            if self.wait_for_timer(2.0):
                 self.phase = 'PHASE_REVERSE_FROM_FERTI'
 
 # -----------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'PHASE_REVERSE_FROM_FERTI':
             if not self.phase_initialized:
                 self.reverse_target = self.current_tcp_pos.copy()
-                self.reverse_target[1] += 0.15
+                self.reverse_target[1] += 0.33
                 self.phase_initialized = True
                 self.get_logger().info("Reversing safely...")
 
@@ -748,10 +870,9 @@ class Task5c(Node):
                 self.phase = 'REVRSE_TO_ALING_FERTI_WAIT'
 # -------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'REVRSE_TO_ALING_FERTI_WAIT':
-            if self.wait_for_timer(2.0):
+            if self.wait_for_timer(1.0):
                 self.phase = 'REVRSE_TO_ALING_FERTI'
-# --------------------------------------------------------------------------------------------------------------------------
-
+# ------------------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'REVRSE_TO_ALING_FERTI':
 
 
@@ -766,14 +887,13 @@ class Task5c(Node):
             }
 
             speed_scale = {
-                'shoulder_pan_joint': 1.0,
+                'shoulder_pan_joint': 1.0,  #     <===  CHNAGE HERE IF NEED
                 'shoulder_lift_joint': 1.0,
-                'elbow_joint': 0.9,
+                'elbow_joint': 1.0,
                 'wrist_1_joint': 1.0,
                 'wrist_2_joint': 1.0,
                 'wrist_3_joint': 1.0,
             }
-
 
 
             if self.move_joint_group(targets, speed_scale):
@@ -782,9 +902,9 @@ class Task5c(Node):
 
 # -------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'ALING_TO_INTI_WAIT':
-            if self.wait_for_timer(2.0):
+            if self.wait_for_timer(1.0):
                 self.phase = 'PHASE_ALIGN_TO_INIT'
-# ----------------------------------------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------------------------------------------------
 
         elif self.phase == 'PHASE_ALIGN_TO_INIT':
 
@@ -795,13 +915,14 @@ class Task5c(Node):
                 0
             )
 
+
             if reached:
                 self.get_logger().info(" Returned to initial shoulder pan.")
                 self.stop_all()
                 self.get_logger().info(f" this is when  intint {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
                 self.phase = 'PHASE_GRIPPER_ORIENTATION_DOWN'
 
-# ---------------------------------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------------------------------------
 
         elif self.phase == 'PHASE_GRIPPER_ORIENTATION_DOWN':
 
@@ -812,7 +933,7 @@ class Task5c(Node):
                 if joint_name not in self.joint_pos:
                     return
 
-                self.target_wrist_val = self.joint_pos[joint_name] + self.wrist1_delta_down
+                self.target_wrist_val = self.joint_pos[joint_name] - self.wrist1_delta_down
 
                 self.phase_initialized = True
                 self.get_logger().info(f"Rotating Wrist Down... Target: {self.target_wrist_val:.2f}")
@@ -830,7 +951,7 @@ class Task5c(Node):
             if not self.ebot_docked:
                 self.get_logger().info("Waiting for eBot to arrive at dock...", throttle_duration_sec=2.0)
                 return
-            if self.wait_for_timer(1.0):
+            if self.wait_for_timer(2.0):
                 if self.ebotWorldPosition is None:
                     self.ebotWorldPosition = self.lookup_tf(self.base_link_name, self.ebotTransformName)
 
@@ -845,38 +966,68 @@ class Task5c(Node):
         elif self.phase == 'MOVED_FOR_EBOT_HOVER':
             # Move to HOVER position
             target = self.ebotWorldPosition.copy()
-            target[2] += 0.20
+            target[2] += 0.25
 
             if self.move_to_tcp_target(target, 0.01):
                 self.get_logger().info("Hovered over eBot. Descending to DROP.")
                 self.phase = 'FINAL_APPROACH_EBOT_WAIT'
 
-
 # -------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'FINAL_APPROACH_EBOT_WAIT':
             if self.wait_for_timer(2.0):
+                self.phase = 'PERFECT_PLACE_WRIST_3_ROATTION'
+
+# -------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+# wrist orentation rotatation
+
+
+        elif self.phase == 'PERFECT_PLACE_WRIST_3_ROATTION':
+
+            joint_name = 'wrist_3_joint'
+            joint_idx = 5
+
+            if not self.phase_initialized:
+                if joint_name not in self.joint_pos:
+                    return
+
+                self.target_wrist_val = self.joint_pos[joint_name] - (np.pi)
+
+                self.phase_initialized = True
+                self.get_logger().info(f"Rotating Wrist Down... Target: {self.target_wrist_val:.2f}")
+
+            if self.move_joint_to_angle(self.target_wrist_val, joint_name, joint_idx):
+                self.get_logger().info(" Wrist Oriented Down.")
+                self.get_logger().info(f"gripper down phase {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
+                self.phase_initialized = False
+                self.phase = 'MOVED_DOWNWARD_FERTI'
+
+# ------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+        elif self.phase == 'MOVED_DOWNWARD_FERTI':
+            if not self.phase_initialized:
+                self.ebotApproach_target = self.current_tcp_pos.copy()
+                self.ebotApproach_target[2] -= 0.08
+                self.phase_initialized = True
+                self.intail_force = self.current_force_z
+                self.get_logger().info("Reversing safely...")
+
+            reached = self.move_to_tcp_target(self.ebotApproach_target, tol=0.02, slow=True)
+
+            if reached or (abs(self.current_force_z - self.intail_force) > 10.0):
+                self.get_logger().info("Reverse Complete.")
+                self.phase_initialized = False
                 self.phase = 'DROP_FERTI_ON_EBOT'
 
-# -----------------------------------------------------------------------------------------------------------------------------------------------------------
-#   BELOW  pHASE Might be issue remove if need
-# -----------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-#         elif self.phase == 'FINAL_APPROACH_EBOT':
-#             target =  self.ebotWorldPosition.copy()
-#             target[2] -= 0.05
-#             if self.move_to_tcp_target(target , 0.01):
-#                 self.get_logger().info("eBot is  Descending  now going to drop")
-#                 self.phase = 'DROP_FERTI_ON_EBOT'
-# # -------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
         elif self.phase == 'DROP_FERTI_ON_EBOT':
             self.set_gripper_state('detach')
-            self.get_logger().info("detach hogaya hai bhai ")
+            self.get_logger().info(f"detach complete ferti on ebot {self.ebotWorldPosition} current arm pose {self.current_tcp_pos} ")
             self.phase = 'RETARCT_FROM_EBOT_WAIT'
-
 # -------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'RETARCT_FROM_EBOT_WAIT':
-            if self.wait_for_timer(2.0):
+            if self.wait_for_timer(1.0):
                 self.phase = 'RETARCT_FROM_EBOT'
 
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -885,12 +1036,12 @@ class Task5c(Node):
             self.get_logger().info("we are retract from intial pose")
             if not self.phase_initialized:
                  self.Retract_target = self.current_tcp_pos.copy()
-                 self.Retract_target[0] -= 0.05
-                 self.Retract_target[2] += 0.05
+                 self.Retract_target[0] -= 0.07
+                 self.Retract_target[2] += 0.07
                  self.phase_initialized = True
                  self.get_logger().info(f"Retarct to: {self.Retract_target}")
 
-            if self.move_to_tcp_target(self.Retract_target, tol=0.02, slow=True):
+            if self.move_to_tcp_target(self.Retract_target, tol=0.02):
                 self.get_logger().info("Lift Complete.")
                 self.phase_initialized = False
                 self.phase = 'EBOT_MOVEMENT_ALLOW'
@@ -898,7 +1049,7 @@ class Task5c(Node):
 # ------------------------------------------------------------------------------------------------------------------------------------------
 
         elif self.phase == 'EBOT_MOVEMENT_ALLOW':
-            self.get_logger().info(" Signaling Ebot to move.")
+            self.get_logger().info(" signal Ebot to move.")
 
             ferti_placed_msg = Bool()
             ferti_placed_msg.data = True
@@ -908,185 +1059,375 @@ class Task5c(Node):
 
             self.get_logger().info("Dock flag reset. Moving to Initial Phase.")
 
-            self.phase = 'FRUITS_TRAY_ALING'
+            self.phase = 'INTAIL_RETURN_UNLOAD_POSE_WAIT'
 
-# ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------come back intial pose wait for frti -----------------------
+# ====================================== new unload path ============================================================
+# ----------------------------------------------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'INTAIL_RETURN_UNLOAD_POSE_WAIT':
+            if self.wait_for_timer(1.0):
+                self.get_logger().info(f"we euler roll , pitch , yam index 3,4,5 of tcp pose  {self.current_euler_angel}  cunnet pose { self.current_tcp_pos} \n  current joint pose {self.joint_pos}")
+                self.phase = 'INTAIL_RETURN_UNLOAD_POSE'
 
-# =======================================================================================================================================================================================
-# ------------------------------------------------------------fruits sort phase ------------------------------------------------------------------------------------------------
-# ========================================================================================================================================================================================
+
+
+# -----------------------------------------------------------------------------------------------------------------------------------------------------
+
+        elif self.phase == 'INTAIL_RETURN_UNLOAD_POSE':
+
+            targets = {
+
+                'shoulder_pan_joint': self.initial_arm_pos['shoulder_pan_joint'],
+                'shoulder_lift_joint': self.initial_arm_pos['shoulder_lift_joint'],
+                'elbow_joint': self.initial_arm_pos['elbow_joint'],
+                'wrist_1_joint': self.initial_arm_pos['wrist_1_joint'],
+                'wrist_2_joint': self.initial_arm_pos['wrist_2_joint'],
+                'wrist_3_joint': self.initial_arm_pos['wrist_3_joint'],
+            }
+
+
+            speed_scale = {
+                'shoulder_pan_joint': 1.0,
+                'shoulder_lift_joint': 1.0,
+                'elbow_joint': 1.0,
+                'wrist_1_joint': 1.0,
+                'wrist_2_joint': 1.0,
+                'wrist_3_joint': 1.0,
+            }
 
 
 
-        elif self.phase  == 'FRUITS_TRAY_ALING':
-            if self.move_to_tcp_target(self.fruitHomePosition, tol=0.02, slow=True):
-                self.get_logger().info(f" hover to the fruits tray{self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
-                self.get_logger().info(" we are at the hover at the fruits tary ")
-                self.phase = 'SETTEL_FRUITS_TRAY'
+            if self.move_joint_group(targets, speed_scale):
+                self.get_logger().info(f"we euler roll , pitch , yam index 3,4,5 of tcp pose  {self.current_euler_angel}  cunnet pose { self.current_tcp_pos} \n  current joint pose {self.joint_pos}")
+                self.get_logger().info("init pose again check sucess ")
+                self.phase = 'WAIT_FOR_EBOT_RETURN'
 
-# -----------------------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-        elif self.phase == 'SETTEL_FRUITS_TRAY':
-            if self.wait_for_timer(3.0):
-                self.phase = 'APPROACH_FRUITS'
 
-# ---------------------------------------------------------------------------------------------------------------------------------
-# THERE IS MIGHT BE SOME ISSUE CAN BE HAPPEND WITH THE GRIPPER BETTTER IF WE USED THE ARM POSE CHECKER LIKE FERTILIZER
 
-# -------------------------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'APPROACH_FRUITS':
+        elif self.phase == 'WAIT_FOR_EBOT_RETURN':
 
-            if self.current_fruit_index >= len(self.badFruitTable):
-                self.get_logger().info("All fruits sorted. Stopping.")
-                self.stop_joint()
-                self.phase = 'UNLOAD_BASE_ALING'
+            if not self.ebot_docked:
+                self.get_logger().info("Waiting for eBot to return with fertilizer...", throttle_duration_sec=2.0)
                 return
 
-            fruit_record = self.badFruitTable[self.current_fruit_index]
-            original_fruit_pose = fruit_record['pos']
+            self.get_logger().info("ebot reach at the return at dockstation")
+            self.phase = 'FERTI_NEW_TF_WAIT'
+# ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-            self.current_fruits_pose = original_fruit_pose.copy()
 
-            hover_target = original_fruit_pose.copy()
-            hover_target[2] += 0.15
 
-            reached = self.move_to_tcp_target(hover_target,tol=0.01)
 
-            if reached:
-                self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.current_fruits_pose},  jointState {self.joint_pos}")
-                self.get_logger().info(" we are at the hover at the fruits   now go  check the orenation  of pickup ")
-                self.phase = 'FRUIST_HOVER_WAIT'
 
-# ---------------------------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'FRUIST_HOVER_WAIT':
+# -------------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'FERTI_NEW_TF_WAIT':
+            if self.wait_for_timer(5.0):
+                self.phase = 'FERTI_NEW_TF_UNLOAD'
+
+#   once time is used this if the ebot delay the reach dock when ifts proper stop at pose then we can remove the above time
+
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+        elif self.phase == 'FERTI_NEW_TF_UNLOAD':
+
+            self.get_logger().info("we are getting the tf of ferti when its on e bot ")
+            if self.ferti_unload_pose is None:
+                self.ferti_unload_pose = self.lookup_tf(self.base_link_name, self.fertilizerTFname)
+
+
+            if self.ferti_unload_pose is None:
+                self.get_logger().info("Waiting for fertilizer TF  new ...", throttle_duration_sec=2.0)
+                return
+            self.get_logger().info(f"new feti pose {self.ferti_unload_pose} ")
+            self.get_logger().info("getting fertilzer here again ")
+            self.phase = 'GRIPPER_UNLOAD_FERTI_DOWN'
+
+
+# -------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'GRIPPER_UNLOAD_FERTI_DOWN':
+            joint_name = 'wrist_1_joint'
+            joint_idx = 3
+
+            if not self.phase_initialized:
+                if joint_name not in self.joint_pos:
+                    return
+
+                self.target_wrist_val = self.joint_pos[joint_name] - self.wrist1_delta_down
+
+                self.phase_initialized = True
+                self.get_logger().info(f"Rotating Wrist Down... Target: {self.target_wrist_val:.2f}")
+
+            if self.move_joint_to_angle(self.target_wrist_val, joint_name, joint_idx):
+                self.get_logger().info(" Wrist Oriented Down.")
+                self.get_logger().info(f"gripper down phase {self.current_tcp_orient}  euler {self.current_euler_angel}, pose current {self.current_tcp_pos} ,  \n jointState {self.joint_pos}")
+                self.phase_initialized = False
+                self.phase = 'FERTI_UNLOAD_ALING_WAIT'   #  < ========  current not move for the certain angel  just aling and moved
+
+
+
+# --------------------------------------------------------------------------------------------------------------------------------------------------------------
+# ==========================================================================================================================================================================================================
+#  this used when the arm is not operate properly  the i move the angel  of joint for the perfect orentation
+
+        elif self.phase == 'MOVED_TO_CERTAIN_ANGEl':
+            if not self.phase_initialized :
+                self.current_joint_pose = self.joint_pos.copy()
+                self.targets = {
+
+                    'shoulder_lift_joint': self.current_joint_pose['shoulder_lift_joint'],    # here need to change add or subtract need if used
+                    'elbow_joint': self.current_joint_pose['elbow_joint'],
+
+                }
+
+
+                self.speed_scale = {
+
+                    'shoulder_lift_joint': 1.0,
+                    'elbow_joint': 1.0,
+
+                }
+                self.phase_initialized =True
+
+            if self.move_joint_group(self.targets, self.speed_scale):
+                self.phase_initialized  = False
+                self.get_logger().info(f"gripper down phase {self.current_tcp_orient}  euler {self.current_euler_angel}, pose current {self.current_tcp_pos} ,  \n jointState {self.joint_pos}")
+                self.get_logger().info("move upto certain for the ebot which suit the orenattion for the target")
+                self.phase = 'FERTI_UNLOAD_ALING_WAIT'
+
+
+# ======================================================================================================================================================================================================================
+
+# -------------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'FERTI_UNLOAD_ALING_WAIT':
             if self.wait_for_timer(1.0):
+                self.phase = 'ALING_ARM_FOR_UNLOAD_FERTI'
+# --------------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'ALING_ARM_FOR_UNLOAD_FERTI':
+            # Use your existing helper function to rotate the base
+            if self.align_joint_to_pose(self.ferti_unload_pose, 'shoulder', self.joint_names_list[0], 0):
+                self.get_logger().info(f"gripper down phase {self.current_tcp_orient}  euler {self.current_euler_angel}, pose current {self.current_tcp_pos} ,  \n jointState {self.joint_pos}")
+                self.get_logger().info("Shoulder aligned. Now   now go to hove hovering.")
+                self.phase = 'ULOAD_FERTI_PRE_APPROACH_WAIT'
+# ------------------------------------------------------------------------------------------------------------------------------------
+
+        elif self.phase == 'ULOAD_FERTI_PRE_APPROACH_WAIT':
+            if self.wait_for_timer(1.0):
+                self.phase = 'ULOAD_FERTI_PRE_APPROACH'
+# ----------------------------------------------------------------------------------------------------------------------------------------
+
+        elif self.phase == 'ULOAD_FERTI_PRE_APPROACH':
+            if not self.phase_initialized:
+                 self.ferti_unload_target = self.ferti_unload_pose.copy()
+                 self.ferti_unload_target[2] += 0.10
+                 self.phase_initialized = True
+                 self.get_logger().info(f"unload target approach: {self.ferti_unload_target}   target : {self.ferti_unload_pose}")
+
+            if self.move_to_tcp_target(self.ferti_unload_target, tol=0.01, slow=False):
+                self.get_logger().info(f" phase {self.current_tcp_orient}  euler {self.current_euler_angel}, pose current {self.current_tcp_pos} ,  \n jointState {self.joint_pos}")
+                self.get_logger().info("Lift Complete.")
+                self.phase_initialized = False
+                self.phase = 'UNLOAD_FERTI_FINAL_WAIT'
+# ------------------------------------------------------------------------------------------------------------------------------------
+
+        elif self.phase == 'UNLOAD_FERTI_FINAL_WAIT':
+            if self.wait_for_timer(2.0):
                 self.set_gripper_state('attach')
-                self.get_logger().info("magnet start here so get attach the cane ")
-                self.phase = 'CURRECT_FRUITS_POSE_FINAL_APPROACH'
+                self.get_logger().info(" magnet start ")
+                self.phase = 'UNLOAD_FERTI_FINAL'
 
-# -----------------------------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'CURRECT_FRUITS_POSE_FINAL_APPROACH':
+# ------------------------------------------------------------------------------------------------------
 
-            self.get_logger().info(f"current magnet force  ({self.current_force_z:.2f} )")
+        elif self.phase == 'UNLOAD_FERTI_FINAL':
 
-            final_target = self.current_fruits_pose.copy()
-            final_target[0]  -=0.04
-            final_target[1] -= 0.001
-            # final_target[2] = -0.005
-            self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , fruits {final_target}, fruits {self.current_fruits_pose}   jointState {self.joint_pos}")
-            reached = self.move_to_tcp_target(final_target,tol=0.001,slow=True)
+            if not self.phase_initialized:
+                 self.ferti_unload_target_final = self.ferti_unload_pose.copy()
 
-            if reached or (self.current_force_z > 50.0):
-                self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos} , fruits {final_target}, fruits {self.current_fruits_pose}   jointState {self.joint_pos}")
-                self.get_logger().info(" arm on the fruits call attach")
-                self.phase = 'ATTACH_FRUITS_PRE_WAIT'
+                 self.phase_initialized = True
+                 self.get_logger().info(f"unload target approach: {self.ferti_unload_target_final} , current magnet {self.current_force_z} ")
 
-# -------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'ATTACH_FRUITS_PRE_WAIT':
-            if self.wait_for_timer(3.0):
-                self.phase = 'ATTACH_FRUITS_ACTION'
+            reached = self.move_to_tcp_target(self.ferti_unload_target_final, tol=0.01, slow=True)
+            self.get_logger().info(f", current magnet {self.current_force_z} ")
 
-        elif self.phase == 'ATTACH_FRUITS_ACTION':
-                self.set_gripper_state('attach')
-                self.get_logger().info(f"{self.current_tcp_orient} , pose current {self.current_tcp_pos}    jointState {self.joint_pos}")
-                self.phase = 'LIFT_FRUIRTS_ATTACH'
+            if reached  or (self.current_force_z > 35):
+                self.stop_all()
+                self.get_logger().info(f"  ferti unload  final {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
+                self.get_logger().info("Lift Complete.")
+                self.phase_initialized = False
+                self.phase = 'LIFT_TARGET_UNLOAD_WAIT'
+# --------------------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'LIFT_TARGET_UNLOAD_WAIT':
+            if self.wait_for_timer(2.0):
+                self.phase = 'LIFT_TARGET_UNLOAD'
+# ---------------------------------------------------------------------------------------------------------------------------------------
 
 
-# -------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'LIFT_FRUIRTS_ATTACH':
+        elif self.phase == 'LIFT_TARGET_UNLOAD':
              if not self.phase_initialized:
-                self.temp = self.joint_pos.copy()
+                self.lift_unload_target = self.current_tcp_pos.copy()
+                self.lift_unload_target[2] += 0.07
+                self.get_logger().info(f"curren_pose {self.current_tcp_pos} target {self.lift_unload_target}")
                 self.phase_initialized = True
 
-             targets = {
 
-
-                'elbow_joint': self.temp['elbow_joint'] + 0.34,
-                'wrist_1_joint': self.temp['wrist_1_joint'] - 0.30,
-                # 'wrist_3_joint': self.temp['wrist_3_joint'] - 0.30,
-
-            }
-
-             speed_scale = {
-
-                'elbow_joint': 0.5,
-                'wrist_1_joint': 0.5,
-                # 'wrist_3_joint': 0.5,
-
-            }
 
             #  if this fail the use indivdual joint
             # self.move_joint_to_angle(self.safe_lift_angle, self.joint_names_list[1], 1):
 
-             reached = self.move_joint_group(targets, speed_scale)
+             reached = self.move_to_tcp_target(self.lift_unload_target, tol= 0.01, slow=True)
              if reached :
-                self.get_logger().info(f" lift fruits  wala hai   {self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose}")
+                self.get_logger().info(f" ferti unload wala hai   {self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose}")
                 self.get_logger().info("we are lif success fully ")
-                self.temp = None
                 self.phase_initialized = False
-                self.phase = 'LIFT_FRUITS_WAIT'
+                self.phase = 'ALLOW_EBOT_AFTER_UNLOAD'
+
+# --------------------------------------------------------------------------------------------------------------------------------------
+
+        elif self.phase == 'ALLOW_EBOT_AFTER_UNLOAD':
+            self.get_logger().info(" Signal Ebot to move.")
+
+            ferti_placed_msg = Bool()
+            ferti_placed_msg.data = True
+            self.fertilizer_status_publisher.publish(ferti_placed_msg)
+
+            self.ebot_docked = False
+
+            self.get_logger().info("Dock flag reset. Moving to Initial Phase.")
+
+            self.phase = 'ALING_TO_TRAY_UNLOAD_WAIT'
 
 # ------------------------------------------------------------------------------------------------------------
 
-        elif self.phase == 'LIFT_FRUITS_WAIT':
-            if self.wait_for_timer(3.0):
+        elif self.phase == 'ALING_TO_TRAY_UNLOAD_WAIT':
+            if self.wait_for_timer(1.0):
+                self.phase = 'ALING_TO_TRAY_UNLOAD'
+
+# --------------------------------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'ALING_TO_TRAY_UNLOAD':
+            if self.move_to_tcp_target(self.fruitHomePosition, tol=0.02, slow=True):
+                self.fruits_tray_hover_pos = self.joint_pos.copy()
+                self.get_logger().info(f" hover to the fruits tray  for unload the ferti {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
+                self.phase = 'MOVED_FOR_DUSTBIN_WAIT'
+                                            # /\
+                                            # ||
+                                            #  from 2
+
+# =======================================================================================================================================================
+
+#  IF USE ALING THEN NEED THEN PLEASE ENABLE TO REVRSE
+
+        elif self.phase == 'BASE_ALING_TO_DUSTBIN':
+            if self.align_joint_to_pose(self.dustbinPosition, 'shoulder', self.joint_names_list[0], 0):
+                self.get_logger().info(f"Base Aling to dustbin now , Moving to dustbin.")
+                self.dustbin_hover_pose = self.joint_pos.copy()
+                self.phase = 'MOVED_FOR_DUSTBIN_WAIT'
+# =========================================================================================================================================================
+
+        elif self.phase == 'MOVED_FOR_DUSTBIN_WAIT':     #     <=============  here 2
+            if self.wait_for_timer(1.0):
                 self.phase = 'MOVED_FOR_DUSTBIN'
-
-# ------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------
 
         elif self.phase == 'MOVED_FOR_DUSTBIN':
+            # 1. Calculate the remaining distance for each axis
 
-            reached = self.move_to_tcp_target(self.dustbinPosition,tol= 0.22,slow=True)
+            if not self.phase_initialized :
+                self.target_dustbin = self.dustbinPosition.copy()
+                self.target_dustbin[2] += 0.15
+                self.get_logger().info("we are moving at the dustbin ")
+                self.phase_initialized = True
 
-            self.get_logger().info(f"  fruits unload time  {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
+            reached = self.move_to_tcp_target(self.target_dustbin, tol=0.02, slow=True)
             if reached:
-                self.get_logger().info("WE ARE AT DUSTBIN .")
+                self.get_logger().info("Target reached. WE ARE AT DUSTBIN.")
+                self.phase_initialized = False
                 self.phase = 'DUSTBIN_WAIT'
-
-# ------------------------------------------------------------------------------------------------------------
-
+# ---------------------------------------------------------------------------------------
         elif self.phase == 'DUSTBIN_WAIT':
-            if self.wait_for_timer(3.0):
+            if self.wait_for_timer(1.0):
                 self.phase = 'CALL_DEATTACH_FRUITS'
-
-# -------------------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------
 
         elif self.phase == 'CALL_DEATTACH_FRUITS':
                 self.get_logger().info("Deactivating Gripper...")
                 self.set_gripper_state('detach')
                 self.current_fruit_index += 1
-                self.phase = 'FRUITS_TRAY_ALING'
+                self.phase = 'RETURN_TRAY_WAIT'  #     <===  CHNAGE HERE IF ALING WALA CONCEPT HAI  NEED  ==||
+                                                 #                                  \/
 
-# -----------------------------------------------------------------------------------------------------------------
+#=====================================================================HERE I COME DIRECTLY SO NOT STORE TRAY THEREFORE NO RETURN POSSIVLR=================================================================================
+# ----------------------------------------------------------------------------------------------------------
+        elif self.phase == 'RETRACT_DUSTBIN_POSE':                             #   /\
+            if not self.phase_initialized :
 
-        elif self.phase  == 'FRUITS_TRAY_ALING':
-            if self.move_to_tcp_target(self.fruitHomePosition, tol=0.02):
-                self.get_logger().info(f" hover to the fruits tray{self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
-                self.get_logger().info(" we are at the hover at the fruits tary ")
-                self.phase = 'SETTEL_FRUITS_TRAY'
+                self.targets = {
 
-# =================================================================================================================================================================
-# -----------------------------------------------------------------------------------------------------ferti unload logic ----------------------------------------------------
-# ==================================================================================================================================================================
+                    'shoulder_pan_joint': self.dustbin_hover_pose['shoulder_pan_joint'],
+                    'shoulder_lift_joint': self.dustbin_hover_pose['shoulder_lift_joint'],
+                    'elbow_joint': self.dustbin_hover_pose['elbow_joint'],
 
-        elif self.phase == 'UNLOAD_BASE_ALING':
+                }
 
-            initial_shoulder_pan = self.initial_arm_pos['shoulder_pan_joint']
-            reached = self.move_joint_to_angle(
-                initial_shoulder_pan,
-                'shoulder_pan_joint',
-                0
-            )
+                self.speed_scale = {
+                    'shoulder_pan_joint': 1.0,
+                    'shoulder_lift_joint': 1.0,
+                    'elbow_joint': 0.9,
 
-            if reached:
-                self.get_logger().info(" Returned to initial shoulder pan.")
-                self.stop_all()
-                self.get_logger().info(f" this is when  intint {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
-                self.phase = 'UNLOAD_FERTI_INTIAL_ALING'
+                }
+                self.phase_initialized =True
+
+            if self.move_joint_group(self.targets, self.speed_scale):
+                self.phase_initialized  = False
+                self.get_logger().info("Fertilizer alignment restored (FAST).")
+                self.phase = 'RETURN_TRAY_WAIT'
+
+# --------------------------------------------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'RETURN_TRAY_WAIT':
+            if self.wait_for_timer(1.0):
+                self.phase = 'RETURN_TRAY_POSE'
+# ----------------------------------------------------------------------------------------------------------------------------------------------
+
+        elif self.phase == 'RETURN_TRAY_POSE':
+            if not self.phase_initialized :
+
+                self.targets = {
+
+                    'shoulder_pan_joint': self.fruits_tray_hover_pos['shoulder_pan_joint'],
+                    'shoulder_lift_joint': self.fruits_tray_hover_pos['shoulder_lift_joint'],
+                    'elbow_joint': self.fruits_tray_hover_pos['elbow_joint'],
+                    'wrist_1_joint': self.fruits_tray_hover_pos['wrist_1_joint'],
+                    'wrist_2_joint': self.fruits_tray_hover_pos['wrist_2_joint'],
+                    'wrist_3_joint': self.fruits_tray_hover_pos['wrist_3_joint'],
+                }
+
+
+                self.speed_scale = {
+                    'shoulder_pan_joint': 1.0,
+                    'shoulder_lift_joint': 1.0,
+                    'elbow_joint': 1.0,
+                    'wrist_1_joint': 1.0,
+                    'wrist_2_joint': 1.0,
+                    'wrist_3_joint': 1.0,
+                }
+                self.phase_initialized =True
+
+            if self.move_joint_group(self.targets, self.speed_scale):
+                self.phase_initialized  = False
+                self.get_logger().info("Fertilizer alignment restored (FAST).")
+                self.phase = 'REVERSE_ALING_INIT_POSE_WAIT'
+
+# ============================================= RETURN HOME FOR UNLOAD   ====================================================================================================================================================================================
+
+# ------------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'REVERSE_ALING_INIT_POSE_WAIT':
+            if self.wait_for_timer(1.0):
+                self.phase = 'REVERSE_TO_FERTI_INTIAL_ALING'
 
 
 
-        elif self.pahse == 'UNLOAD_FERTI_INTIAL_ALING':
+# ----------------------------------------------------------------------------------------------------------------------------
+
+        elif self.phase == 'REVERSE_TO_FERTI_INTIAL_ALING':
 
             targets = {
 
@@ -1111,143 +1452,21 @@ class Task5c(Node):
 
 
             if self.move_joint_group(targets, speed_scale):
-                self.get_logger().info("Fertilizer alignment restored (FAST).")
-                self.phase = 'UNLOAD_EBOT_WAIT'
-
-# --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-        elif self.phase == 'UNLOAD_EBOT_WAIT':
-            if self.wait_for_timer(2.0):
-                self.phase = 'UNLOAD_EBOT_TF'
-# ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'UNLOAD_EBOT_TF':
-
-            if not self.ebot_docked:
-                self.get_logger().info("Waiting for eBot to return with fertilizer...", throttle_duration_sec=2.0)
-                return
-
-            # Always try to look up the new position, don't check if self.ferti_pose is None
-            self.ferti_unload_pose = self.lookup_tf(self.base_link_name, self.fertilizerTFname)
-
-            # --- 2. Check Transition Condition ---
-            if self.ferti_unload_pose is None:
-                self.get_logger().info("Waiting for fertilizer TF  new ...", throttle_duration_sec=2.0)
-                return
-
-            self.get_logger().info("getting fertilzer here again ")
-            self.phase = 'UNLOAD_FERTI_PREPOSE'
-
-# -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-        elif self.phase == 'UNLOAD_FERTI_PREPOSE':
-            if not self.phase_initialized:
-                 self.ferti_unload_target = self.ferti_unload_pose.copy()
-                 self.ferti_unload_target[2] += 0.05
-                 self.phase_initialized = True
-                 self.get_logger().info(f"unload target approach: {self.ferti_unload_target}   target : {self.ferti_unload_pose}")
-
-            if self.move_to_tcp_target(self.ferti_unload_target, tol=0.01, slow=False):
-                self.get_logger().info(f"  ferti unload pre {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
-                self.get_logger().info("Lift Complete.")
-                self.phase_initialized = False
-                self.phase = 'UNLOAD_FERTI_FINAL_WAIT'
-
-# -----------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-        elif self.phase == 'UNLOAD_FERTI_FINAL_WAIT':
-            if self.wait_for_timer(2.0):
-                self.phase = 'UNLOAD_FERTI_FINAL'
-
-# ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'UNLOAD_FERTI_FINAL':
-
-            if not self.phase_initialized:
-                 self.ferti_unload_target_final = self.ferti_unload_pose.copy()
-                 self.ferti_unload_target_final[2] += 0.001
-                 self.ferti_unload_target_final[0]  -=0.01
-                 self.phase_initialized = True
-                 self.get_logger().info(f"unload target approach: {self.ferti_unload_target_final}   target : {self.ferti_unload_pose}")
-
-            if self.move_to_tcp_target(self.ferti_unload_target_final, tol=0.01, slow=True):
-                self.get_logger().info(f"  ferti unload  final {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
-                self.get_logger().info("Lift Complete.")
-                self.phase_initialized = False
-                self.phase = 'LIFT_TARGET_UNLOAD_WAIT'
-# -----------------------------------------------------------------------------------------------------------------------------------------------------
-# -----------------------------------------------------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'LIFT_TARGET_UNLOAD_WAIT':
-            if self.wait_for_timer(2.0):
-                self.phase = 'LIFT_TARGET_UNLOAD'
-# ----------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-        elif self.phase == 'LIFT_TARGET_UNLOAD':
-             if not self.phase_initialized:
-                self.temp = self.joint_pos.copy()
-                self.phase_initialized = True
-
-             targets = {
-
-
-                'elbow_joint': self.temp['elbow_joint'] + 0.34,
-                'wrist_1_joint': self.temp['wrist_1_joint'] - 0.33,
-            }
-
-             speed_scale = {
-
-                'elbow_joint': 0.5,
-                'wrist_1_joint': 0.5,
-
-            }
-
-            #  if this fail the use indivdual joint
-            # self.move_joint_to_angle(self.safe_lift_angle, self.joint_names_list[1], 1):
-
-             reached = self.move_joint_group(targets, speed_scale)
-             if reached :
-                self.get_logger().info(f" ferti unload wala hai   {self.current_tcp_orient} , pose current {self.current_tcp_pos} , frti {self.ferti_pose}")
-                self.get_logger().info("we are lif success fully ")
-                self.temp = None
-                self.phase_initialized = False
-                self.phase = 'ALING_TO_TRAY_UNLOAD_WAIT'
-
-# ------------------------------------------------------------------------------------------------------------
-
-        elif self.phase == 'ALING_TO_TRAY_UNLOAD_WAIT':
-            if self.wait_for_timer(3.0):
-                self.phase = 'ALING_TO_TRAY_UNLOAD'
-
-# --------------------------------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'ALING_TO_TRAY_UNLOAD':
-            if self.move_to_tcp_target(self.fruitHomePosition, tol=0.02, slow=True):
-                self.get_logger().info(f" hover to the fruits tray  for unload the ferti {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
-                self.phase = 'ALING_TO_DUSTBIN_UNLOAD'
-
-# -------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        elif self.phase == 'ALING_TO_DUSTBIN_UNLOAD':
-            reached = self.move_to_tcp_target(self.dustbinPosition,tol= 0.10,slow=True)
-
-            if reached:
-                self.get_logger().info(f"  ferti unload dustbin  {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
-                self.get_logger().info("WE ARE AT DUSTBIN .")
-                self.phase = 'CALL_DEATTACH_FERTI_UNLOAD'
-
-# ------------------------------------------------------------------------------------------------------------
-
-        elif self.phase == 'CALL_DEATTACH_FERTI_UNLOAD':
-                self.get_logger().info("Deactivating Gripper...")
-                self.set_gripper_state('detach')
+                self.get_logger().info("init pose again check sucess ")
                 self.phase = 'DONE'
 
-# --------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'DONE':
             self.get_logger().info(f"all task done bro look at the tcp pose ", throttle_duration_sec=2.0)
             pass
-# -------------------------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------------------
+
 
 
 def main():
     rclpy.init()
-    node = Task5c()
+    node = Task6()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
