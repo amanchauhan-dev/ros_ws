@@ -43,7 +43,18 @@ setup(
             "rc2 = arm_3578.real_cases.real_case2:main",
             "rc3 = arm_3578.real_cases.real_case3:main",
             "rc5 = arm_3578.real_cases.real_case5:main",
-            "rfc = arm_3578.real_cases.fruits_real:main"
+            "rfc = arm_3578.real_cases.fruits_real:main",
+
+
+            # new Perception scripts 17 feb 2026
+            "np1 = arm_3578.final_perp.new_p1:main",
+            "np2 = arm_3578.final_perp.new_p2:main",
+
+
+            # new Perception scripts 17 feb 2026
+            "nrc4 = arm_3578.final_arm.real_case4:main",
+            "ntcp = arm_3578.final_arm.tcp_pose:main",
+            "nus = arm_3578.final_arm.unload_script:main",
         ],
     },
 )
