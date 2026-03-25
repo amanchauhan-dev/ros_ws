@@ -439,7 +439,8 @@ class SideWallPreview(Node):
         self.right_points_buffer = []
         self.cur_left_buffer = []
         self.cur_right_buffer = []
-
+        self.filtered_left = []
+        self.filtered_right = []
         self.left_shape = [[0,0], [0]*9]
         self.left_shape_x = None
 
@@ -700,12 +701,7 @@ class SideWallPreview(Node):
                 self.stop_active = False
                 self.stop_end_time = None
 
-                # rcleareset shape buffers AFTER stop
-                # self.left_shape = [[0, 0], [0]*9]
-                # self.right_shape = [[0, 0], [0]*9]
-                # self.left_shape_x = None
-                # self.right_shape_x = None
-                    # reset shape buffers ONLY for detected side
+                # reset shape buffers ONLY for detected side
                 if self.stop_side == "left":
                     self.left_shape = [[0, 0], [0]*9]
                     self.left_shape_x = None
@@ -740,7 +736,7 @@ class SideWallPreview(Node):
             cur_left = np.asarray(
                 filter_points_between_robot_and_wall(
                     cur_left, self.robot_y, left_wall_y
-)
+                )
             )
 
         if right_wall_y is not None:
@@ -749,10 +745,10 @@ class SideWallPreview(Node):
                     cur_right, self.robot_y, right_wall_y
                 )
             )
-
         # Left side shape
         ransac_lines_L = []
         if len(cur_left) > 10:
+            self.filtered_left = cur_left
             model_L, inliers_L = ransac_line_fit(cur_left)
 
             if model_L is not None and len(inliers_L) > 10:
@@ -784,6 +780,7 @@ class SideWallPreview(Node):
         # right side shape
         ransac_lines_R = []
         if len(cur_right) > 10:
+            self.filtered_right = cur_right
             model_R, inliers_R = ransac_line_fit(cur_right)
 
             if model_R is not None and len(inliers_R) > 10:
@@ -869,6 +866,30 @@ class SideWallPreview(Node):
         if self.right_points_buffer:
             xs, ys = zip(*self.right_points_buffer)
             self.ax.scatter(xs, ys, c="cyan", s=1, alpha=0.4, label="Right History")
+
+        if hasattr(self, "filtered_left"):
+            if len(self.filtered_left) > 0:
+                self.ax.scatter(
+                    self.filtered_left[:, 0],
+                    self.filtered_left[:, 1],
+                    c="black",
+                    s=8,
+                    label="Filtered Left",
+                    zorder=10
+                )
+
+        if hasattr(self, "filtered_right"):
+            if len(self.filtered_right) > 0:
+                self.ax.scatter(
+                    self.filtered_right[:, 0],
+                    self.filtered_right[:, 1],
+                    c="purple",
+                    s=8,
+                    label="Filtered Right",
+                    zorder=10
+                )
+
+
 
         self.ax.set_aspect("equal")
         self.ax.set_title("Line-distance based clustering")
