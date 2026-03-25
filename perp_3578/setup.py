@@ -24,6 +24,12 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            # old
+            "p1 = perp_3578.old.p1:main",
+
+            # new
+            "p2 = perp_3578.new.p2:main",
+            "p3 = perp_3578.new.p3:main",
         ],
     },
 )
