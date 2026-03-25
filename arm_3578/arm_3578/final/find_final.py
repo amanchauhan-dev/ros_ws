@@ -1086,6 +1086,7 @@ class Task6(Node):
             if not self.phase_initialized :
                 self.target_dustbin = self.dustbinPosition.copy()
                 self.target_dustbin[2] += 0.07
+                self.target_dustbin[0] -= 0.02
                 self.get_logger().info("we are moving at the dustbin ")
                 self.phase_initialized = True
 
