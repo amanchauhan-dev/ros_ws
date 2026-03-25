@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            "nav_v1 = ebot_3578.nav_v1:main",
         ],
     },
 )

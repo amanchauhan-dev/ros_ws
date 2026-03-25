@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            "shape_v1 = shape_3578.shape_v1:main",
         ],
     },
 )
