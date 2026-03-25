@@ -28,6 +28,10 @@ setup(
             "fs = arm_3578.final.fruits_speed_sort:main",
             "sv = arm_3578.final.speed_version_final_fruits:main",
             "us = arm_3578.final.unload_script:main",
+            "va = arm_3578.final.ferti_unload_v3A:main",
+            "vb = arm_3578.final.ferti_unload_v3B:main",
+
+
 
             # Real case
             "fr = arm_3578.real_cases.fruits_real:main",
