@@ -25,6 +25,10 @@ setup(
     entry_points={
         'console_scripts': [
             "nav_v1 = ebot_3578.nav_v1:main",
+            "nav_v2 = ebot_3578.nav_map.navigation:main",
+            "pgm_grid = ebot_3578.nav_map.pgm_to_occupancy_grid:main",
+            "pos_fetch = ebot_3578.nav_map.position_fetcher:main",
+            "algo_test = ebot_3578.nav_map.test:main",
         ],
     },
 )
