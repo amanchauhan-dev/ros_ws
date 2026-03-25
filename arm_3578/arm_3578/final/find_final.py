@@ -869,7 +869,7 @@ class Task6(Node):
             if not self.phase_initialized:
                 self.ebotApproach_target = self.current_tcp_pos.copy()
                 self.ebotApproach_target[2] -= 0.05
-                self.ebotApproach_target[0] += 0.02
+                self.ebotApproach_target[0] -= 0.01
                 self.start_currentforece = self.current_force_z
                 self.get_logger().info("Reversindownard goto  safely...")
                 self.get_logger().info(f" {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
@@ -993,7 +993,7 @@ class Task6(Node):
             if not self.phase_initialized:
                 self.final_target = self.current_fruits_pose.copy()
                 self.final_target[0]  -=0.05
-                self.final_target[2] -= 0.01
+                self.final_target[2] -= 0.015
                 self.phase_initialized = True
                 self.get_logger().info(
                     f"Final approach target: {self.final_target} | fruit: {self.current_fruits_pose}"
@@ -1056,7 +1056,7 @@ class Task6(Node):
         elif self.phase == 'SAFE_HOVER_POSE':
             if not self.phase_initialized:
                 self.lift_target = self.current_tcp_pos.copy()
-                self.lift_target[1] -= 0.07
+                self.lift_target[1] -= 0.05
                 self.lift_target[2] += 0.10
 
 
@@ -1085,8 +1085,8 @@ class Task6(Node):
 
             if not self.phase_initialized :
                 self.target_dustbin = self.dustbinPosition.copy()
-                self.target_dustbin[2] += 0.07
                 self.target_dustbin[0] -= 0.02
+                self.target_dustbin[2] += 0.07
                 self.get_logger().info("we are moving at the dustbin ")
                 self.phase_initialized = True
 
