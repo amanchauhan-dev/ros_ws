@@ -39,6 +39,13 @@ setup(
             "r2 = arm_3578.real_cases.real_case2:main",
             "r3 = arm_3578.real_cases.real_case3:main",
             "r5 = arm_3578.real_cases.real_case5:main",
+
+            # New
+            "fam = arm_3578.new.final_arm_manipulation_3578:main",
+            "fv2 = arm_3578.new.final_v2:main",
+            "hbl = arm_3578.new.hybrid_logic:main",
+            "ffs = arm_3578.new.final_ferti_sol:main",
+            "pr = arm_3578.new.pr:main",
         ],
     },
 )
