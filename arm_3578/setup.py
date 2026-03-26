@@ -46,6 +46,7 @@ setup(
             "hbl = arm_3578.new.hybrid_logic:main",
             "ffs = arm_3578.new.final_ferti_sol:main",
             "pr = arm_3578.new.pr:main",
+            "ffsc = arm_3578.new.fianl_fert_sol_change:main",
         ],
     },
 )
