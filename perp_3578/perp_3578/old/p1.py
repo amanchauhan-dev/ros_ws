@@ -620,10 +620,19 @@ class FruitsAndArucoTF(Node):
                     except Exception:
                         x_cam, y_cam, z_cam = self.convert_pixel_to_3d(cX, cY, distance)
 
-                    try:
-                        quat = R.from_euler('z', float(angle), degrees=False).as_quat()
-                    except Exception:
-                        quat = None
+                    # try:
+                    #     quat = R.from_euler('z', float(angle), degrees=False).as_quat()
+                    # except Exception:
+                    #     quat = None
+                    # ── OPTION B – HARDCODED  t2-39 ──────────────────────────────────
+                    quat = [0.707, 0.028, 0.034, 0.707]                              # t2-39
+
+                    # ── OPTION C – HARDCODED  t2_14 ──────────────────────────────────
+                    # quat = [0.07089297, 0.70553763, 0.70107245, 0.07542053]          # t2_14
+
+                    # ── OPTION D – HARDCODED  t2_14 variant ──────────────────────────
+                    # quat = [0.05367629, 0.70780447, 0.70200457, 0.05763047]          # t2_14 variant
+
 
                     if int(marker_id) in self.ARUCO_OBJECT_MAP:
                         object_type = self.ARUCO_OBJECT_MAP[int(marker_id)]
