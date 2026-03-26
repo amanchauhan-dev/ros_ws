@@ -723,10 +723,15 @@ class Task6(Node):
                 return
 
             if not self.badFruitTable:
-                fruit_records = self.scan_for_bad_fruit_frames()
-                if fruit_records:
-                    self.badFruitTable = fruit_records
-                    self.get_logger().info(f"✓ Found all {len(fruit_records)} bad fruits")
+                partial_records = []
+                for frame_name in self.badFruitFrameList:
+                    position = self.lookup_tf(self.base_link_name, frame_name)
+                    if position is not None:
+                        partial_records.append({'tf_name': frame_name, 'pos': position})
+
+                if len(partial_records) >= 1:   # ← change to 2 if you want minimum 2
+                    self.badFruitTable = partial_records
+                    self.get_logger().info(f"✓ Found {len(partial_records)} fruits. Proceeding.")
                 else:
                     self.get_logger().info("Scanning for bad fruits...", throttle_duration_sec=2.0)
                     return
