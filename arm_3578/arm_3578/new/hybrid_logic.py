@@ -747,7 +747,7 @@ class Task6(Node):
 
                 elif elapsed >= 10.0:
                     # 10s done — take whatever we have
-                    if len(partial_records) >= 1:
+                    if len(partial_records) >= 0:
                         self.badFruitTable = partial_records
                         self.tf_scan_start_time = None
                         self.get_logger().info(f"⚠ 10s done. Found {len(partial_records)}/{len(self.badFruitFrameList)} fruits. Proceeding.")
