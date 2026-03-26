@@ -100,7 +100,7 @@ class Task6(Node):
         self.teamIdentifier = '3578'
         self.base_link_name = 'base_link'
         self.joint_pos = {}
-
+        self.tf_scan_start_time = None
         # tcp_pose variables
         self.safe_lift_angle = None
         self.current_tcp_pos = None
@@ -723,17 +723,43 @@ class Task6(Node):
                 return
 
             if not self.badFruitTable:
+                # Start scan timer on first entry
+                if self.tf_scan_start_time is None:
+                    self.tf_scan_start_time = self.get_clock().now()
+                    self.get_logger().info("Starting 10s TF scan window...")
+
+                elapsed = (self.get_clock().now() - self.tf_scan_start_time).nanoseconds / 1e9
+
+                # Keep collecting whatever is visible
                 partial_records = []
                 for frame_name in self.badFruitFrameList:
                     position = self.lookup_tf(self.base_link_name, frame_name)
                     if position is not None:
                         partial_records.append({'tf_name': frame_name, 'pos': position})
 
-                if len(partial_records) >= 1:   # ← change to 2 if you want minimum 2
+                all_found = len(partial_records) == len(self.badFruitFrameList)
+
+                if all_found:
+                    # Got all 3 early — no need to wait full 10s
                     self.badFruitTable = partial_records
-                    self.get_logger().info(f"✓ Found {len(partial_records)} fruits. Proceeding.")
+                    self.tf_scan_start_time = None
+                    self.get_logger().info(f"✓ All {len(partial_records)} fruits found early. Proceeding.")
+
+                elif elapsed >= 10.0:
+                    # 10s done — take whatever we have
+                    if len(partial_records) >= 1:
+                        self.badFruitTable = partial_records
+                        self.tf_scan_start_time = None
+                        self.get_logger().info(f"⚠ 10s done. Found {len(partial_records)}/{len(self.badFruitFrameList)} fruits. Proceeding.")
+                    else:
+                        # Nothing at all — reset and retry
+                        self.tf_scan_start_time = None
+                        self.get_logger().warn("10s elapsed but NO fruits found. Retrying...")
                 else:
-                    self.get_logger().info("Scanning for bad fruits...", throttle_duration_sec=2.0)
+                    self.get_logger().info(
+                        f"Scanning... {elapsed:.1f}/10.0s | Found: {len(partial_records)}",
+                        throttle_duration_sec=1.0
+                    )
                     return
             self.get_logger().info("✓ All TFs acquired. Starting Phase 2.")
             self.phase = 'PHASE_ALIGN_TO_FERTI'
@@ -753,29 +779,44 @@ class Task6(Node):
         elif self.phase == 'PHASE_PRE_APPROACH':
             target_pre = self.ferti_pose.copy()
             target_pre[1] += 0.15
-
-            reached = self.move_to_tcp_pose_v3(
-                target_pos  = target_pre,
-                target_quat = self.FERTI_PICKUP_QUAT,
-                tol_xy      = 0.015,
-                tol_z       = 0.025,
-                tol_rot     = 0.05,
-                slow        = False
-            )
+         
+            reached = self.move_to_tcp_target_v2(target_pre, tol=0.01, slow=False)
 
             if reached:
-                self.get_logger().info(
-                    f"✓ PRE_APPROACH reached with correct orientation. "
-                    f"orient={self.current_tcp_orient} euler={self.current_euler_angel} "
-                    f"pos={self.current_tcp_pos}"
-                )
+                self.get_logger().info(" Reached +0.15 offset. now ckeck orenation first.")
                 self.phase = 'PREAPPROACH_WAIT_FERTI'
 
+# ------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'PREAPPROACH_WAIT_FERTI':
             if self.wait_for_timer(0.5):
-                self.phase = 'PHASE_FINAL_APPROACH_WAIT'
-# -------------------------------------------------------------------------------------------------------------------------------------------------------------
+                self.phase = 'MOVE_ORENATION_REQUIRED'
+# ------------------------------------------------------------------------------------------------------------------------
 
+        elif self.phase == 'MOVE_ORENATION_REQUIRED':
+
+            targets = {
+
+                'wrist_1_joint': -0.110,
+                'wrist_2_joint': 1.8,
+            }
+
+            speed_scale = {
+
+                'wrist_1_joint': 0.7,
+                'wrist_2_joint': 0.7,
+            }
+
+
+            if self.move_joint_group(targets, speed_scale):
+                self.get_logger().info(f" orentaion wala hai   {self.current_tcp_orient}   euler {self.current_euler_angel} , pose current {self.current_tcp_pos} , frti {self.ferti_pose}")
+                self.phase = 'PHASE_FINAL_APPROACH_WAIT'
+
+# --------------------------------------------------------------------------------------------------------------------------------------------------------------
+        elif self.phase == 'PHASE_FINAL_APPROACH_WAIT':
+            if self.wait_for_timer(1.0):
+                self.get_logger().info("Fertilizer MAgnet start hai ")
+                self.set_gripper_state('attach')
+                self.phase = 'PHASE_FINAL_APPROACH'
 
 
         elif self.phase == 'PHASE_FINAL_APPROACH':
@@ -879,7 +920,7 @@ class Task6(Node):
 # -------------------------------------------------------------------------------------------------------------------------
         elif self.phase == 'ALING_TO_INTI_WAIT':
             if self.wait_for_timer(0.5):
-                self.phase = 'PHASE_ALIGN_TO_INIT'
+                self.phase = 'PHASE_GRIPPER_ORIENTATION_DOWN'
 # --------------------------------------------------------------------------------------------------------------------------
 
         elif self.phase == 'PHASE_GRIPPER_ORIENTATION_DOWN':
@@ -936,29 +977,6 @@ class Task6(Node):
                 self.phase = 'MOVED_DOWNWARD_FERTI'
 
 # ---------------------------------------------------------------------------------------------------------------------------
-
-# wrist orentation rotatation
-
-
-        elif self.phase == 'PERFECT_PLACE_WRIST_3_ROATTION':
-
-            joint_name = 'wrist_3_joint'
-            joint_idx = 5
-
-            if not self.phase_initialized:
-                if joint_name not in self.joint_pos:
-                    return
-
-                self.target_wrist_val = self.joint_pos[joint_name] - (np.pi-0.17)
-
-                self.phase_initialized = True
-                self.get_logger().info(f"Rotating Wrist Down... Target: {self.target_wrist_val:.2f}")
-
-            if self.move_joint_to_angle(self.target_wrist_val, joint_name, joint_idx):
-                self.get_logger().info(" Wrist Oriented Down.")
-                self.get_logger().info(f"gripper down phase while load ferti {self.current_tcp_orient} , pose current {self.current_tcp_pos} ,   jointState {self.joint_pos}")
-                self.phase_initialized = False
-                self.phase = 'MOVED_DOWNWARD_FERTI'
 
 # ------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1393,11 +1411,11 @@ class Task6(Node):
             # -----------------------------------------------------------------------------------------------------------------------
 
   
-            if self.current_force_z > 35.0:
+            if self.current_force_z > 45.0:
                 self.stop_all()
                 self.phase_initialized = False
                 self.get_logger().info(f"Force contact! {self.current_force_z:.1f}N → advancing")
-                self.phase = 'ATTACH_UNLOAD_FERTI'
+                self.phase = 'ATTACH_TARGET_UNLOAD_WAIT'
                 return
             # -------------------------------------------------------------------------------------------------------------------------
             reached = self.move_to_tcp_target_v2(self.ferti_unload_target_final, tol_xy=0.001 , tol_z=0.005, slow=True)
@@ -1477,7 +1495,7 @@ class Task6(Node):
 
             if not self.phase_initialized :
                 self.target_dustbin = self.dustbinPosition.copy()
-                self.target_dustbin[2] += 0.15
+                self.target_dustbin[2] += 0.07
                 self.get_logger().info("we are moving at the dustbin ")
                 self.phase_initialized = True
 
@@ -1505,22 +1523,7 @@ class Task6(Node):
 
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------
-# ========================================================new return mrthod ==================================================
 
-        elif self.phase == 'RETURN_TRAY_POSE_RESET':
-            # 1. Calculate the remaining distance for each axis
-
-            if not self.phase_initialized :
-                self.target_tray_reset = self.fruitHomePosition.copy()
-             
-                self.get_logger().info("we are moving at the trya  again  ")
-                self.phase_initialized = True
-
-            reached = self.move_to_tcp_target_v2(self.target_tray_reset, tol=0.02, slow=False)
-            if reached:
-                self.get_logger().info("Target reached. at tray.")
-                self.phase_initialized = False
-                self.phase = 'REVERSE_ALING_INIT_POSE_WAIT_UNLOAD'
 # ----------------------------------------------------------------------------------------------------------------------------------------------
 
         elif self.phase == 'RETURN_TRAY_POSE_UNLOAD':
