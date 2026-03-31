@@ -1,5 +1,11 @@
 # ros_ws — e-Yantra IIT Bombay 2026 Finalist Team
 
+# TEAM MEMBERS:
+1. [Aman Ratanlal Chauhan](https://github.com/amanchauhan-dev)
+2. [Harshil Rahulbhai Mehta](https://github.com/mehta-harshil)
+3. [Raghav Jibachha Mandal](https://github.com/raghavmandal0511-netizen)
+4. [Ashishkumar Rajeshkumar Jha](https://github.com/Ashish-jha-85)
+
 **ros_ws** is the primary ROS workspace developed for the **e-Yantra IIT Bombay Competition 2026**, integrating navigation, perception, and manipulation into a coordinated robotic system. The architecture is modular, with bridge-based orchestration layers that connect high-level task logic to domain-specific ROS packages.
 
 This workspace implements a structured pipeline where perception modules detect objects and shapes, navigation handles robot mobility, and manipulation controls robotic arm execution. A central coordination layer manages communication between subsystems to enable reliable autonomous operation.
