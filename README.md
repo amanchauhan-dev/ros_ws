@@ -7,7 +7,7 @@ This workspace implements a structured pipeline where perception modules detect 
 ---
 
 # System Architecture Overview
-
+![Architecture Flow Chart](diagram.png)
 The workspace is divided into four major domains:
 
 * **Integration Layer**
